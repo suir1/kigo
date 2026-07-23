@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/suir1/kigo/internal/version.Version=${VERSION} -X github.com/suir1/kigo/internal/version.Commit=${COMMIT} -X github.com/suir1/kigo/internal/version.Date=${DATE}" -o /out/kigo ./cmd/kigo
 
-FROM alpine:3.20
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates \
 	&& addgroup -S kigo \
