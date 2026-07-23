@@ -1,0 +1,9 @@
+{$KIGO_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy kigo:9100
+
+	log {
+		output stdout
+		format json
+	}
+}

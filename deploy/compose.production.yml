@@ -1,0 +1,94 @@
+name: kigo
+
+services:
+  caddy:
+    image: ${KIGO_CADDY_IMAGE:-caddy:2.10.2-alpine}
+    restart: unless-stopped
+    environment:
+      KIGO_DOMAIN: ${KIGO_DOMAIN:?set KIGO_DOMAIN in the production env file}
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      kigo:
+        condition: service_healthy
+    networks:
+      kigo_net:
+        ipv4_address: ${KIGO_CADDY_IP:-172.30.77.2}
+
+  kigo:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ${KIGO_IMAGE:-kigo:local}
+    restart: unless-stopped
+    environment:
+      KIGO_LISTEN: ":9100"
+      KIGO_PUBLIC_URL: "https://${KIGO_DOMAIN:?set KIGO_DOMAIN in the production env file}"
+      KIGO_TRUSTED_PROXIES: "${KIGO_CADDY_IP:-172.30.77.2}/32"
+      KIGO_NATIVE_RELAY: ${KIGO_NATIVE_RELAY:?set KIGO_NATIVE_RELAY in the production env file}
+      KIGO_NATIVE_RELAY_SECRET: ${KIGO_NATIVE_RELAY_SECRET:?set KIGO_NATIVE_RELAY_SECRET in the production env file}
+      KIGO_NATIVE_RELAY_CREDENTIAL_TTL: ${KIGO_NATIVE_RELAY_CREDENTIAL_TTL:-2h}
+      KIGO_SIGNAL_REQUESTS_PER_MINUTE: ${KIGO_SIGNAL_REQUESTS_PER_MINUTE:-60}
+      KIGO_TURN_LISTEN: "0.0.0.0:3478"
+      KIGO_TURN_PUBLIC_IP: ${KIGO_PUBLIC_IP:?set KIGO_PUBLIC_IP in the production env file}
+      KIGO_TURN_USER: ${KIGO_TURN_USER:-kigo}
+      KIGO_TURN_SECRET: ${KIGO_TURN_SECRET:?set KIGO_TURN_SECRET in the production env file}
+      KIGO_TURN_REALM: ${KIGO_TURN_REALM:-kigo}
+      KIGO_TURN_CREDENTIAL_TTL: ${KIGO_TURN_CREDENTIAL_TTL:-2h}
+      KIGO_TURN_CREDENTIALS_PER_MINUTE: ${KIGO_TURN_CREDENTIALS_PER_MINUTE:-1200}
+      KIGO_TURN_MIN_PORT: ${KIGO_TURN_MIN_PORT:-49160}
+      KIGO_TURN_MAX_PORT: ${KIGO_TURN_MAX_PORT:-50159}
+      KIGO_TURN_MAX_ALLOCATIONS: ${KIGO_TURN_MAX_ALLOCATIONS:-512}
+      KIGO_TURN_MAX_ALLOCATIONS_PER_USER: ${KIGO_TURN_MAX_ALLOCATIONS_PER_USER:-4}
+      KIGO_TURN_MAX_ALLOCATIONS_PER_IP: ${KIGO_TURN_MAX_ALLOCATIONS_PER_IP:-32}
+      KIGO_TURN_EGRESS_WINDOW: ${KIGO_TURN_EGRESS_WINDOW:-1h}
+      KIGO_TURN_MAX_EGRESS_MIB: ${KIGO_TURN_MAX_EGRESS_MIB:--1}
+      KIGO_TURN_MAX_EGRESS_MIB_PER_USER: ${KIGO_TURN_MAX_EGRESS_MIB_PER_USER:--1}
+      KIGO_TURN_MAX_EGRESS_MIB_PER_IP: ${KIGO_TURN_MAX_EGRESS_MIB_PER_IP:--1}
+    expose:
+      - "9100/tcp"
+    ports:
+      - "3478:3478/udp"
+      - "${KIGO_TURN_MIN_PORT:-49160}-${KIGO_TURN_MAX_PORT:-50159}:${KIGO_TURN_MIN_PORT:-49160}-${KIGO_TURN_MAX_PORT:-50159}/udp"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9100/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks:
+      kigo_net:
+        ipv4_address: ${KIGO_APP_IP:-172.30.77.3}
+
+  relay:
+    image: ${KIGO_IMAGE:-kigo:local}
+    restart: unless-stopped
+    command: ["relay"]
+    environment:
+      KIGO_RELAY_LISTEN: ":9000"
+      KIGO_RELAY_ROOM_TTL: ${KIGO_RELAY_ROOM_TTL:-10m}
+      KIGO_RELAY_TOKEN_SECRET: ${KIGO_NATIVE_RELAY_SECRET:?set KIGO_NATIVE_RELAY_SECRET in the production env file}
+    ports:
+      - "9000:9000/tcp"
+    depends_on:
+      kigo:
+        condition: service_healthy
+    networks:
+      kigo_net:
+        ipv4_address: ${KIGO_RELAY_IP:-172.30.77.4}
+
+networks:
+  kigo_net:
+    ipam:
+      config:
+        - subnet: ${KIGO_DOCKER_SUBNET:-172.30.77.0/24}
+
+volumes:
+  caddy_data:
+  caddy_config:

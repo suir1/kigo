@@ -1,0 +1,24 @@
+[Unit]
+Description=Kigo web app, signaling, and TURN service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/kigo/kigo.env
+ExecStartPre=/usr/local/bin/kigo serve --check-config
+ExecStart=/usr/local/bin/kigo serve
+Restart=on-failure
+RestartSec=3
+User=kigo
+Group=kigo
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kigo
+
+[Install]
+WantedBy=multi-user.target

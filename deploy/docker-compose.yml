@@ -1,0 +1,44 @@
+services:
+  kigo:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: kigo:local
+    restart: unless-stopped
+    environment:
+      KIGO_LISTEN: ":9100"
+      KIGO_PUBLIC_URL: "https://kigo.example"
+      KIGO_NATIVE_RELAY: "relay.example.com:9000"
+      KIGO_NATIVE_RELAY_SECRET: "change-native-relay-secret"
+      KIGO_NATIVE_RELAY_CREDENTIAL_TTL: "2h"
+      KIGO_TURN_LISTEN: "0.0.0.0:3478"
+      KIGO_TURN_PUBLIC_IP: "203.0.113.10"
+      KIGO_TURN_USER: "kigo"
+      KIGO_TURN_SECRET: "change-me"
+      KIGO_TURN_REALM: "kigo"
+      KIGO_TURN_CREDENTIAL_TTL: "2h"
+      KIGO_TURN_MIN_PORT: "49160"
+      KIGO_TURN_MAX_PORT: "50159"
+      KIGO_TURN_MAX_ALLOCATIONS: "512"
+      KIGO_TURN_MAX_ALLOCATIONS_PER_USER: "4"
+      KIGO_TURN_MAX_ALLOCATIONS_PER_IP: "32"
+      KIGO_TURN_EGRESS_WINDOW: "1h"
+      KIGO_TURN_MAX_EGRESS_MIB: "-1"
+      KIGO_TURN_MAX_EGRESS_MIB_PER_USER: "-1"
+      KIGO_TURN_MAX_EGRESS_MIB_PER_IP: "-1"
+    ports:
+      - "9100:9100/tcp"
+      - "3478:3478/udp"
+      - "49160-50159:49160-50159/udp"
+
+  relay:
+    image: kigo:local
+    restart: unless-stopped
+    command: ["relay"]
+    environment:
+      KIGO_RELAY_LISTEN: ":9000"
+      KIGO_RELAY_ROOM_TTL: "10m"
+      KIGO_RELAY_PASS: "change-legacy-password"
+      KIGO_RELAY_TOKEN_SECRET: "change-native-relay-secret"
+    ports:
+      - "9000:9000/tcp"

@@ -1,0 +1,11 @@
+.DS_Store
+/dist/
+/bin/
+/deploy/production.env
+/artifacts/
+__pycache__/
+*.pyc
+/kigo
+/node_modules/
+coverage.out
+npm-debug.log*

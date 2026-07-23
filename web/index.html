@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kigo</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <h1>Kigo</h1>
+        <p>Temporary encrypted file and text transfer. Files are sent peer-to-peer when possible and are not uploaded to this server.</p>
+      </header>
+
+      <section class="tabs">
+        <button data-tab="file" class="active">Send File</button>
+        <button data-tab="text">Send Text</button>
+        <button data-tab="receive">Receive</button>
+        <button data-tab="note">Notepad</button>
+      </section>
+
+      <section id="file" class="panel active">
+        <label class="field">
+          <span>Files</span>
+          <input id="fileInput" type="file" multiple />
+        </label>
+        <label class="field">
+          <span>Pairing code (optional)</span>
+          <input id="fileCode" maxlength="80" autocomplete="off" placeholder="Random if blank" />
+        </label>
+        <input id="folderInput" type="file" webkitdirectory multiple hidden />
+        <div class="button-row">
+          <button id="sendFile">Send Selected</button>
+          <button id="pickFolder" type="button">Pick Folder</button>
+        </div>
+      </section>
+
+      <section id="text" class="panel">
+        <label class="field">
+          <span>Text</span>
+          <textarea id="textInput" rows="8" placeholder="Paste text to send"></textarea>
+        </label>
+        <label class="field">
+          <span>Pairing code (optional)</span>
+          <input id="textCode" maxlength="80" autocomplete="off" placeholder="Random if blank" />
+        </label>
+        <button id="sendText">Send Text</button>
+      </section>
+
+      <section id="receive" class="panel">
+        <label class="field">
+          <span>Pairing code</span>
+          <input id="codeInput" maxlength="80" autocomplete="one-time-code" placeholder="K7M9Q2" />
+        </label>
+        <button id="receiveButton">Receive</button>
+      </section>
+
+      <section id="note" class="panel">
+        <div class="note-connect">
+          <button id="hostNote" type="button">Host</button>
+          <label class="field note-code">
+            <span>Pairing code</span>
+            <input id="noteCode" maxlength="80" autocomplete="one-time-code" placeholder="Random for host" />
+          </label>
+          <label class="field note-pad">
+            <span>Pad</span>
+            <input id="notePad" maxlength="64" autocomplete="off" value="main" />
+          </label>
+          <button id="joinNote" type="button">Join</button>
+        </div>
+        <label class="field">
+          <span>Shared text</span>
+          <textarea id="noteEditor" rows="12" disabled></textarea>
+        </label>
+        <div class="note-toolbar">
+          <span id="noteState">Not connected</span>
+          <button id="clearNote" type="button" disabled>Clear</button>
+          <button id="leaveNote" type="button" disabled>Leave</button>
+        </div>
+      </section>
+
+      <section class="status">
+        <div id="share" class="share hidden"></div>
+        <div id="progress" class="progress hidden" aria-live="polite"></div>
+        <button id="cancelButton" class="cancel hidden" type="button">Cancel</button>
+        <pre id="log"></pre>
+        <div id="textOutput" class="text-output hidden"></div>
+        <div id="downloads"></div>
+      </section>
+    </main>
+    <script src="/secure-channel.js"></script>
+    <script src="/webrtc-runtime.js"></script>
+    <script src="/app.js"></script>
+    <script src="/note.js"></script>
+  </body>
+</html>

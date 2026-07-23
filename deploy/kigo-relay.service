@@ -1,0 +1,20 @@
+[Unit]
+Description=Kigo native TCP relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/kigo/kigo-relay.env
+ExecStart=/usr/local/bin/kigo relay --no-lan-announce
+Restart=on-failure
+RestartSec=3
+User=kigo
+Group=kigo
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

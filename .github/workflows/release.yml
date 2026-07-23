@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-direct:
+    name: Windows same-port direct
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Stress same-port socket reuse
+        run: go test -count=20 ./internal/netreuse
+
+      - name: Test native direct integration
+        run: go test ./internal/app
+
+  release:
+    name: Build, attest, and publish
+    needs: windows-direct
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must look like v1.2.3 or v1.2.3-rc.1: $RELEASE_TAG" >&2
+            exit 2
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag points at this workflow commit
+        run: test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test release source
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Build release artifacts and SBOM
+        env:
+          KIGO_VERSION: ${{ env.RELEASE_TAG }}
+          KIGO_COMMIT: ${{ github.sha }}
+        run: ./scripts/build_release.sh
+
+      - name: Verify release artifacts
+        run: ./scripts/verify_release.sh dist "$RELEASE_TAG"
+
+      - name: Attest build provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Attest release SBOM
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+          sbom-path: dist/kigo-${{ env.RELEASE_TAG }}.cdx.json
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kigo-${{ env.RELEASE_TAG }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Kigo $RELEASE_TAG"
+          fi

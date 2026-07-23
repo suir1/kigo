@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Go and protocol checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Verify modules
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Test
+        run: go test ./...
+
+      - name: Race test
+        run: go test -race ./internal/...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check scripts and browser JavaScript
+        run: |
+          bash -n scripts/*.sh
+          sh -n scripts/install.sh
+          ./scripts/test_install.sh
+          python3 -m unittest discover -s scripts -p 'test_*.py' -v
+          ./scripts/nat_lab.sh --dry-run | python3 -m json.tool >/dev/null
+          node --check web/app.js
+          node --check scripts/smoke_public_browser.js
+          node --test scripts/test_public_browser.js
+          KIGO_PUBLIC_BROWSER_URL=https://kigo.example \
+            ./scripts/smoke_public_browser.sh --dry-run | python3 -m json.tool >/dev/null
+
+  windows-direct:
+    name: Windows same-port direct
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Stress same-port socket reuse
+        run: go test -count=20 ./internal/netreuse
+
+      - name: Test native direct integration
+        run: go test ./internal/app
+
+      - name: Build Windows CLI
+        run: go build ./cmd/kigo
+
+      - name: Test Windows installer
+        shell: pwsh
+        run: ./scripts/test_install.ps1
+
+  smoke:
+    name: Linux smoke tests
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes iproute2 iptables netcat-openbsd
+
+      - name: Build smoke binary
+        run: go build -trimpath -o "$RUNNER_TEMP/kigo" ./cmd/kigo
+
+      - name: HTTPS smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+        run: ./scripts/smoke_https.sh
+
+      - name: Local web smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+        run: ./scripts/smoke_local_web.sh
+
+      - name: Native relay smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+        run: ./scripts/smoke_relay.sh
+
+      - name: Interface policy smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+        run: ./scripts/smoke_interface.sh
+
+      - name: Native NAT matrix
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+          KIGO_ARTIFACT_DIR: ${{ runner.temp }}/nat-lab
+        run: sudo --preserve-env=KIGO_BIN,KIGO_ARTIFACT_DIR ./scripts/nat_lab.sh
+
+      - name: Upload NAT diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kigo-nat-lab-${{ github.sha }}
+          path: ${{ runner.temp }}/nat-lab/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Public matrix orchestration smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+        run: ./scripts/smoke_public_matrix.sh
+
+      - name: TUI smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+        run: ./scripts/smoke_tui.py
+
+  browser-smoke:
+    name: Chromium WebRTC smoke
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Build smoke binary
+        run: go build -trimpath -o "$RUNNER_TEMP/kigo" ./cmd/kigo
+
+      - name: Native and browser transfer smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+          PLAYWRIGHT_CHROMIUM_CHANNEL: ""
+        run: ./scripts/smoke_native_web.sh
+
+  container:
+    name: Container build
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Validate production Compose template
+        run: ./scripts/deploy_preflight.sh --env-file deploy/production.env.example --allow-placeholders
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg VERSION=v0.0.0-ci \
+            --build-arg COMMIT="$GITHUB_SHA" \
+            --build-arg DATE=1970-01-01T00:00:00Z \
+            --tag kigo:ci \
+            .
+
+      - name: Check image metadata
+        run: |
+          docker run --rm kigo:ci version --json > "$RUNNER_TEMP/version.json"
+          grep -q '"version": "v0.0.0-ci"' "$RUNNER_TEMP/version.json"
+          grep -q "\"commit\": \"$GITHUB_SHA\"" "$RUNNER_TEMP/version.json"
+          grep -q '"os": "linux"' "$RUNNER_TEMP/version.json"
+
+      - name: Validate production containers
+        env:
+          KIGO_IMAGE: kigo:ci
+        run: ./scripts/deploy_preflight.sh --env-file deploy/production.env.example --allow-placeholders --runtime --no-build
+
+  release-artifacts:
+    name: Release artifact layout
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build release artifacts
+        env:
+          KIGO_VERSION: v0.0.0-ci
+          KIGO_COMMIT: ${{ github.sha }}
+          KIGO_DATE: "1970-01-01T00:00:00Z"
+        run: ./scripts/build_release.sh
+
+      - name: Verify release artifacts
+        run: ./scripts/verify_release.sh dist v0.0.0-ci
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kigo-release-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
