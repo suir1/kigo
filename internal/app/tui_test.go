@@ -295,7 +295,7 @@ func TestTUIBrowserSelectsSendFileAndCancelsWithoutChanges(t *testing.T) {
 		t.Fatalf("browser view missing title:\n%s", model.View())
 	}
 
-	model.browser.selected = browserEntryIndex(t, model.browser.entries, "child/")
+	model.browser.selected = browserEntryIndex(t, model.browser.entries, pathBrowserDirectoryLabel("child"))
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyEnter})
 	if model.browser.current != child {
 		t.Fatalf("current directory = %q, want %q", model.browser.current, child)
@@ -338,7 +338,7 @@ func TestTUIBrowserReceiveModeRestrictsSelectionToDirectories(t *testing.T) {
 	if containsString(pathBrowserLabels(model.browser.entries), "payload.txt") {
 		t.Fatalf("directory browser listed file: %#v", pathBrowserLabels(model.browser.entries))
 	}
-	model.browser.selected = browserEntryIndex(t, model.browser.entries, "output/")
+	model.browser.selected = browserEntryIndex(t, model.browser.entries, pathBrowserDirectoryLabel("output"))
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyEnter})
 	model.browser.selected = browserEntryIndex(t, model.browser.entries, "[Select this folder]")
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyEnter})

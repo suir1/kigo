@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ func TestConfigureClientTLSLoadsAdditionalCA(t *testing.T) {
 	}))
 	defer server.Close()
 	certificate := server.Certificate()
-	caPath := t.TempDir() + "/ca.pem"
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
 	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestConfigureClientTLSLoadsAdditionalCA(t *testing.T) {
 }
 
 func TestConfigureClientTLSRejectsInvalidBundle(t *testing.T) {
-	path := t.TempDir() + "/ca.pem"
+	path := filepath.Join(t.TempDir(), "ca.pem")
 	if err := os.WriteFile(path, []byte("not a certificate"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func newTestTLSCAPath(t *testing.T) string {
 	}))
 	certificate := server.Certificate()
 	server.Close()
-	caPath := t.TempDir() + "/ca.pem"
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
 	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
