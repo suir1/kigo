@@ -1110,6 +1110,16 @@ func mustResolveTCPAddr(t *testing.T, value string) *net.TCPAddr {
 	return addr
 }
 
+func TestCaptureStdoutHandlesOutputLargerThanPipeBuffer(t *testing.T) {
+	payload := strings.Repeat("x", 1024*1024)
+	output := captureStdout(t, func() {
+		_, _ = io.WriteString(os.Stdout, payload)
+	})
+	if output != payload {
+		t.Fatalf("captured %d bytes, want %d", len(output), len(payload))
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -1120,14 +1130,26 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = w
 	defer func() {
 		os.Stdout = old
+		_ = w.Close()
+		_ = r.Close()
+	}()
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		data, err := io.ReadAll(r)
+		result <- readResult{data: data, err: err}
 	}()
 	fn()
+	os.Stdout = old
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
+	captured := <-result
+	if captured.err != nil {
+		t.Fatal(captured.err)
 	}
-	return string(data)
+	return string(captured.data)
 }

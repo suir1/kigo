@@ -250,14 +250,7 @@ func acceptBidirectionalDirectPrimary(
 				directConnectResult: directConnectResult{err: err},
 			}
 		}
-		stop := make(chan struct{})
-		go func() {
-			select {
-			case <-ctx.Done():
-				_ = conn.Close()
-			case <-stop:
-			}
-		}()
+		stopContextWatch := transport.CloseOnContextDone(ctx, conn)
 		peerCount, initiatorRole, verifyErr := verifyBidirectionalDirectAcceptorIndexed(
 			conn,
 			deadline,
@@ -266,7 +259,7 @@ func acceptBidirectionalDirectPrimary(
 			0,
 			requested,
 		)
-		close(stop)
+		stopContextWatch()
 		if verifyErr != nil {
 			_ = conn.Close()
 			if ctx.Err() != nil {

@@ -78,7 +78,7 @@ grep -q '"credential_mode":"temporary"' "$WORK/health.json"
 curl -fsS "$DIRECT_BASE_URL/api/health" >/dev/null
 
 echo "relay: $LISTEN"
-"$BIN" --route-history "$HISTORY" --relay "$LISTEN" --relay-pass "$PASS" doctor --timeout 2s >"$WORK/doctor.log"
+"$BIN" --route-history "$HISTORY" --signal "$BASE_URL" --relay "$LISTEN" --relay-pass "$PASS" doctor --timeout 2s >"$WORK/doctor.log"
 grep -q 'relay-observed TCP mapping:' "$WORK/doctor.log"
 "$BIN" --route-history "$HISTORY" --relay "$LISTEN" --relay-pass "$PASS" route --json --pair native-native --timeout 2s >"$WORK/route.json"
 grep -q '"pair": "native-native"' "$WORK/route.json"
@@ -89,7 +89,7 @@ grep -q '"latency_ms":' "$WORK/route.json"
 grep -q '"kind": "signal-direct"' "$WORK/signal-route.json"
 grep -q '"primary": true' "$WORK/signal-route.json"
 echo "ok doctor relay"
-"$BIN" --route-history "$HISTORY" --relay "$LISTEN" --relay-pass "$PASS" \
+"$BIN" --route-history "$HISTORY" --signal "$BASE_URL" --relay "$LISTEN" --relay-pass "$PASS" \
   --proxy "http://$PROXY_LISTEN" doctor --timeout 2s >"$WORK/doctor-proxy.log"
 grep -q 'relay: ok .* via proxy' "$WORK/doctor-proxy.log"
 grep -q 'direct: disabled by --proxy' "$WORK/doctor-proxy.log"

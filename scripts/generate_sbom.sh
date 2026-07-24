@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 VERSION=${KIGO_VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}
 OUT=${KIGO_DIST:-"$ROOT/dist"}
-TOOL_VERSION=${CYCLONEDX_GOMOD_VERSION:-v1.10.0}
+TOOL_VERSION=${CYCLONEDX_GOMOD_VERSION:-v1.9.0}
 
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
