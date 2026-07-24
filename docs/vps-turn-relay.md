@@ -69,7 +69,60 @@ The service currently limits TURN to 128 active allocations globally, 4 per
 temporary credential, and 16 per source IP. Egress token buckets allow 10 GiB
 globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
+## Current deployment
+
+The VPS is running the GitHub prerelease
+[`v0.1.0-alpha.1`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.1),
+deployed on 2026-07-24 from commit
+`90052a69a8430aa033896fb62dc411ae386fc900`. The release workflow published five
+platform archives, `SHA256SUMS`, a CycloneDX SBOM, and GitHub provenance and
+SBOM attestations.
+
+The deployed Linux amd64 artifact has these checksums:
+
+- Release archive: `742ef4ce05d4ff4aef76492043c7180606325d910188d01fe79aaddf1cb2782f`
+- `/usr/local/bin/kigo`: `fa6344efdd988d50e332240e0a09726aff7314c94d3f4eb6728cd884139097b6`
+
+`kigo version --json` reports Go 1.23.1, Linux amd64, the release tag, and the
+same commit. The previous `v0.1.0-dev.20260723.parallel2` binary is retained at
+`/usr/local/bin/kigo.backup-20260724-190751-parallel2`; its SHA-256 is
+`34ae8308281bdbb26f8e87c41b56348483040bd51df88b1795b1b786d08633a5`.
+
+To roll back both public services:
+
+```sh
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260724-190751-parallel2 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
+```
+
 ## Verification
+
+The `v0.1.0-alpha.1` deployment passed all three public transfer paths on
+2026-07-24:
+
+- A forced-TURN Chromium matrix transferred encrypted text and a random 256 KiB
+  file with matching SHA-256 checksums. Both peers selected `relay/relay` UDP.
+  The redacted local evidence is in
+  `artifacts/v0.1.0-alpha.1-forced-turn/matrix.json`.
+- A natural-ICE Chromium matrix transferred the same scenarios with matching
+  checksums. Both peers selected direct `srflx/srflx` UDP, while authenticated
+  TURN remained advertised as fallback. The redacted local evidence is in
+  `artifacts/v0.1.0-alpha.1-natural/matrix.json`.
+- A native-native 1 MiB random file transfer disabled direct TCP and LAN
+  discovery. Signaling selected `service-native-relay`, issued a temporary
+  room-bound credential, and used four striped TCP relay connections through
+  `106.53.170.243:5140`. The source and received file both had SHA-256
+  `ad8b2332d463198b289626f6f2b345986ab387fbdf46c77ab40a25ad767eea48`.
+
+For the native service-relay test, leave transport policy at its default
+`auto`. `--transport native` requires an explicit local `--relay`, while the
+default policy can wait for signaling to advertise the service relay. Use
+`--no-direct --no-lan` to make the negotiated service relay the only viable
+native route.
+
+After these transfers, both systemd units were active; `1001/tcp`, `5140/tcp`,
+and `5140/udp` were listening. `/api/health` reported the release version, zero
+active TURN allocations, zero dropped bytes, and zero quota failures.
 
 The persistent service was verified on 2026-07-20 with forced relay-only ICE.
 Chromium transferred encrypted text and a random 256 KiB file with matching
