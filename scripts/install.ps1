@@ -117,17 +117,17 @@ try {
     Save-KigoDownload $archiveURL $archivePath
     Save-KigoDownload $checksumsURL $checksumsPath
 
-    $matches = @()
+    $checksumMatches = @()
     foreach ($line in Get-Content $checksumsPath) {
         if ($line -match '^([0-9A-Fa-f]{64})\s+\*?([^\s]+)$' -and $Matches[2] -ceq $archive) {
-            $matches += $Matches[1].ToLowerInvariant()
+            $checksumMatches += $Matches[1].ToLowerInvariant()
         }
     }
-    if ($matches.Count -ne 1) {
+    if ($checksumMatches.Count -ne 1) {
         throw "SHA256SUMS does not contain exactly one entry for $archive"
     }
     $actual = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLowerInvariant()
-    if ($actual -cne $matches[0]) {
+    if ($actual -cne $checksumMatches[0]) {
         throw "SHA-256 mismatch for $archive"
     }
 
