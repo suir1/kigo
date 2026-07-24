@@ -229,15 +229,8 @@ func JoinWithOptions(ctx context.Context, opts JoinOptions) (JoinResult, error) 
 	if err != nil {
 		return JoinResult{}, err
 	}
-	stopContextWatch := make(chan struct{})
-	defer close(stopContextWatch)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-stopContextWatch:
-		}
-	}()
+	stopContextWatch := transport.CloseOnContextDone(ctx, conn)
+	defer stopContextWatch()
 	t := transport.NewTCPTransport(conn)
 	if err := sendJSON(ctx, t, joinMessage{
 		Type:                    "join",

@@ -1,9 +1,50 @@
 package transport
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 )
+
+type trackedCloser struct {
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (c *trackedCloser) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
+
+func TestCloseOnContextDoneStopsBeforeOwnershipTransfer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	closer := &trackedCloser{closed: make(chan struct{})}
+	stop := CloseOnContextDone(ctx, closer)
+
+	stop()
+	stop()
+	cancel()
+	select {
+	case <-closer.closed:
+		t.Fatal("closer was closed after watcher stopped")
+	default:
+	}
+}
+
+func TestCloseOnContextDoneClosesOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	closer := &trackedCloser{closed: make(chan struct{})}
+	stop := CloseOnContextDone(ctx, closer)
+
+	cancel()
+	select {
+	case <-closer.closed:
+	case <-time.After(time.Second):
+		t.Fatal("closer was not closed after cancellation")
+	}
+	stop()
+}
 
 func TestAdaptiveSendBudgetUsesQueuePressure(t *testing.T) {
 	const (

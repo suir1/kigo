@@ -1,6 +1,6 @@
 module github.com/suir1/kigo
 
-go 1.23.0
+go 1.23.1
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
