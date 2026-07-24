@@ -167,7 +167,7 @@
       } catch {}
     }
 
-    function makeTransport(dc, extraDataChannels = []) {
+    function makeTransport(dc, extraDataChannels = [], pendingPrimaryMessages = []) {
       const dataChannels = Array.isArray(extraDataChannels)
         ? extraDataChannels.filter(Boolean)
         : [extraDataChannels].filter(Boolean);
@@ -242,6 +242,7 @@
         channel.onerror = () => fail(new Error("transfer connection failed"));
         channel.onclose = () => fail(new Error("transfer connection closed"));
       }
+      for (const event of pendingPrimaryMessages.splice(0)) receive(dc, event);
       const sendOn = async (channel, obj) => {
         const payload = typeof obj === "string" || obj instanceof ArrayBuffer || ArrayBuffer.isView(obj)
           ? obj
@@ -346,6 +347,9 @@
             primaryClose();
           };
           peer.dc = await withTimeout(Promise.resolve(peer.dc), "WebRTC DataChannel", connectTimeoutMs);
+          const pendingPrimaryMessages = [];
+          peer.dc.binaryType = "arraybuffer";
+          peer.dc.onmessage = (event) => pendingPrimaryMessages.push(event);
           await waitDataChannelOpen(peer.dc, connectTimeoutMs, peer.pc);
           if (useUnorderedData) {
             peer.dataDC = await withTimeout(Promise.resolve(peer.dataDC), "WebRTC data channel", connectTimeoutMs);
@@ -374,7 +378,7 @@
           const dataChannels = useParallelData && dataPeers.length > 0
             ? dataPeers.map((dataPeer) => dataPeer.dc)
             : [peer.dataDC].filter(Boolean);
-          pipe = makeTransport(peer.dc, dataChannels);
+          pipe = makeTransport(peer.dc, dataChannels, pendingPrimaryMessages);
           removePipeCleanup = task.addCleanup(() => pipe.close());
           return await handler({ attempt, connectionMs, iceMode, peer, pipe });
         } catch (err) {
