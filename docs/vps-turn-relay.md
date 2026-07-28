@@ -75,31 +75,41 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running the GitHub prerelease
-[`v0.1.0-alpha.1`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.1),
-deployed on 2026-07-24 from commit
-`90052a69a8430aa033896fb62dc411ae386fc900`. The release workflow published five
-platform archives, `SHA256SUMS`, a CycloneDX SBOM, and GitHub provenance and
-SBOM attestations.
+The VPS is running `v0.1.0-dev.20260728.persistent-note`, deployed on 2026-07-28
+from merged commit `1fdbb8659e78d98da42b85b4838e04157a18ae42` (PR
+[#10](https://github.com/suir1/kigo/pull/10)). `kigo version --json` reports Go
+1.25.6, Linux amd64, and the same commit. The deployed `/usr/local/bin/kigo`
+SHA-256 is `fc7ec6a673d5f275c0fc6475cda617a93681e0c1c4c933011fff06a27c381a15`.
 
-The deployed Linux amd64 artifact has these checksums:
+Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
+service uses `KIGO_NOTE_STORE=/var/lib/kigo/notes` and `KIGO_NOTE_TTL=720h`.
+The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
+files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
+retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-- Release archive: `742ef4ce05d4ff4aef76492043c7180606325d910188d01fe79aaddf1cb2782f`
-- `/usr/local/bin/kigo`: `fa6344efdd988d50e332240e0a09726aff7314c94d3f4eb6728cd884139097b6`
-
-`kigo version --json` reports Go 1.23.1, Linux amd64, the release tag, and the
-same commit. The previous `v0.1.0-dev.20260723.parallel2` binary is retained at
-`/usr/local/bin/kigo.backup-20260724-190751-parallel2`; its SHA-256 is
-`34ae8308281bdbb26f8e87c41b56348483040bd51df88b1795b1b786d08633a5`.
-
-To roll back both public services:
+The previous `v0.1.0-alpha.1` binary is retained at
+`/usr/local/bin/kigo.backup-20260728-104430-persistent-note`. To roll back both
+public services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260724-190751-parallel2 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260728-104430-persistent-note /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
 ## Verification
+
+The persistent-notepad deployment passed these public checks on 2026-07-28:
+
+- Trusted HTTPS returned `persistent-note-v1` and a configured 30-day Notepad
+  TTL from `/api/health`; the public `note.js` contained the persistent client.
+- A native client edited revision 1 while alone. After restarting
+  `kigo-public.service`, a later native client recovered the same text.
+- A fresh Chromium context edited while alone and reached `Synced revision 1`.
+  A second context with no origin-local storage recovered the service snapshot
+  and displayed `Available`.
+- On-disk files had hashed names and mode `0600`; scanning them found no
+  pairing code, pad name, or plaintext. Both service units and the certificate
+  renewal timer remained active after deployment.
 
 The `v0.1.0-alpha.1` deployment passed all three public transfer paths on
 2026-07-24:
