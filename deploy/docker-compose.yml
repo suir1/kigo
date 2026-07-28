@@ -11,6 +11,8 @@ services:
       KIGO_NATIVE_RELAY: "relay.example.com:9000"
       KIGO_NATIVE_RELAY_SECRET: "change-native-relay-secret"
       KIGO_NATIVE_RELAY_CREDENTIAL_TTL: "2h"
+      KIGO_NOTE_STORE: "/var/lib/kigo/notes"
+      KIGO_NOTE_TTL: "720h"
       KIGO_TURN_LISTEN: "0.0.0.0:3478"
       KIGO_TURN_PUBLIC_IP: "203.0.113.10"
       KIGO_TURN_USER: "kigo"
@@ -30,6 +32,8 @@ services:
       - "9100:9100/tcp"
       - "3478:3478/udp"
       - "49160-50159:49160-50159/udp"
+    volumes:
+      - kigo_data:/var/lib/kigo
 
   relay:
     image: kigo:local
@@ -42,3 +46,6 @@ services:
       KIGO_RELAY_TOKEN_SECRET: "change-native-relay-secret"
     ports:
       - "9000:9000/tcp"
+
+volumes:
+  kigo_data:

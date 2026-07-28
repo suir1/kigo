@@ -67,6 +67,8 @@ type Config struct {
 	TLSCert                   string
 	TLSKey                    string
 	RoomTTL                   time.Duration
+	NoteStore                 string
+	NoteTTL                   time.Duration
 	SignalRequestsPerMinute   int
 	TrustedProxies            string
 }
@@ -81,8 +83,10 @@ type Server struct {
 	iceLimits      map[string][]time.Time
 	turnServer     *turn.Server
 	turnQuota      *turnAllocationQuota
+	notes          map[string]*persistentNoteHub
 	trustedProxies []netip.Prefix
 	mu             sync.Mutex
+	noteMu         sync.Mutex
 	upgrader       websocket.Upgrader
 }
 
@@ -124,6 +128,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.RoomTTL <= 0 {
 		cfg.RoomTTL = defaultRoomTTL
+	}
+	if cfg.NoteTTL == 0 {
+		cfg.NoteTTL = defaultPersistentNoteTTL
 	}
 	if cfg.SignalRequestsPerMinute == 0 {
 		cfg.SignalRequestsPerMinute = 60
@@ -176,6 +183,7 @@ func New(cfg Config) *Server {
 		directs:        newDirectRegistry(),
 		signalLimits:   map[string][]time.Time{},
 		iceLimits:      map[string][]time.Time{},
+		notes:          map[string]*persistentNoteHub{},
 		trustedProxies: trustedProxies,
 	}
 	server.upgrader = websocket.Upgrader{
@@ -304,11 +312,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{
 		"ok":           true,
 		"version":      version.Get(),
-		"capabilities": []string{"transport-negotiation-v1", "direct-rendezvous-v1", "signal-reconnect-v1"},
+		"capabilities": []string{"transport-negotiation-v1", "direct-rendezvous-v1", "signal-reconnect-v1", "persistent-note-v1"},
 		"uptime_ms":    time.Since(s.started).Milliseconds(),
 		"public_url":   s.cfg.PublicURL,
 		"room_ttl_ms":  s.cfg.RoomTTL.Milliseconds(),
 		"rooms":        stats,
+		"notepad":      s.persistentNoteStats(),
 		"native_relay": map[string]any{
 			"configured":        s.cfg.NativeRelay != "",
 			"endpoint":          s.cfg.NativeRelay,
@@ -923,7 +932,6 @@ func (s *Server) cleanupLoop(ctx context.Context) {
 
 func (s *Server) cleanup() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now()
 	s.cleanupRateLimitsLocked(now)
 	for token, r := range s.rooms {
@@ -934,6 +942,8 @@ func (s *Server) cleanup() {
 	}
 	s.negotiations.expireBefore(now)
 	s.directs.expireBefore(now)
+	s.mu.Unlock()
+	s.cleanupPersistentNotes(now)
 }
 
 func (s *Server) cleanupRateLimitsLocked(now time.Time) {

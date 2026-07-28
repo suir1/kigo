@@ -31,6 +31,9 @@ func (s *Server) validateHTTPConfig() error {
 	if s.cfg.SignalRequestsPerMinute < -1 {
 		return errors.New("signaling request rate must be -1 or greater")
 	}
+	if s.cfg.NoteTTL <= 0 {
+		return errors.New("persistent notepad TTL must be positive")
+	}
 	if _, err := parseTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return err
 	}
@@ -94,6 +97,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/negotiate/", s.handleNegotiate)
 	mux.HandleFunc("/api/direct/", s.handleDirect)
+	mux.HandleFunc("/api/note-sync/", s.handlePersistentNote)
 	mux.HandleFunc("/api/signal/", s.handleSignal)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.Handle("/", http.FileServer(s.webFileSystem()))

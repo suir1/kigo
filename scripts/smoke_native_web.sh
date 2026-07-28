@@ -1076,8 +1076,7 @@ async function webToWebFallback(browser) {
 
 async function waitForNoteConnected(page) {
   await page.waitForFunction(() => {
-    const state = document.querySelector("#noteState")?.textContent || "";
-    return state.startsWith("Connected") && document.querySelector("#noteEditor")?.disabled === false;
+    return document.querySelector("#noteEditor")?.disabled === false;
   }, null, { timeout: 30000 });
 }
 
@@ -1104,47 +1103,30 @@ async function nativeHostToWebNote(browser) {
     await waitForOutput(native.output, /Remote revision 1:\nbrowser edit for native host/, "browser note update at native host");
     await page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 1", null, { timeout: 10000 });
 
-    await page.evaluate(() => {
-      const peers = window.__kigoSmokePeerConnections || [];
-      if (!peers.length) throw new Error("notepad smoke did not capture a peer connection");
-      peers[peers.length - 1].close();
-    });
-    await page.waitForFunction(() => {
-      return (document.querySelector("#log")?.textContent || "").includes("Notepad connection interrupted. Reconnecting 2/3");
-    }, null, { timeout: 10000 });
-    await waitForNoteConnected(page);
-    await waitForNoteText(page, "browser edit for native host");
-    await waitForOutput(native.output, /reconnecting attempt 2\/3/, "native note reconnect");
+    await page.click("#leaveNote");
+    await page.evaluate(() => localStorage.clear());
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (native.proc.exitCode !== null) throw new Error("native notepad exited when the browser left");
 
-    await page.waitForFunction(async ({ pairingCode, selectedPad, expectedText }) => {
-      const key = await browserNoteDraftStorageKey(pairingCode, "join", selectedPad);
-      const record = localStorage.getItem(key) || "";
-      return record !== "" && !record.includes(expectedText);
-    }, { pairingCode: code, selectedPad: pad, expectedText: "browser edit for native host" }, { timeout: 10000 });
-    await page.reload();
-    await page.waitForFunction(() => {
-      return (document.querySelector("#log")?.textContent || "").includes("Recovered encrypted draft revision 1.");
-    }, null, { timeout: 10000 });
-    await waitForNoteConnected(page);
-    await waitForNoteText(page, "browser edit for native host");
-    await waitForOutput(native.output, /reconnecting attempt 3\/3/, "native note reconnect after browser reload");
+    const later = await newPage(browser, noteLink);
+    await waitForNoteConnected(later.page);
+    await waitForNoteText(later.page, "browser edit for native host");
 
     native.proc.stdin.write("native reply for browser\n");
-    await waitForNoteText(page, "native reply for browser");
-    await page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Remote revision 2", null, { timeout: 10000 });
+    await waitForNoteText(later.page, "native reply for browser");
+    await later.page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Remote revision 2", null, { timeout: 10000 });
 
-    await page.click("#clearNote");
+    await later.page.click("#clearNote");
     await waitForOutput(native.output, /Remote revision 3:\n\(empty\)/, "browser note clear at native host");
-    await page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 3", null, { timeout: 10000 });
+    await later.page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 3", null, { timeout: 10000 });
 
-    await page.click("#leaveNote");
+    await later.page.click("#leaveNote");
+    native.proc.stdin.write("/quit\n");
     const codeAfterLeave = await withTimeout("native note host exit", 10000, () => waitProc(native.proc));
     const { stdout, stderr } = native.output();
     assertEqual(codeAfterLeave, 0, `native note host exited non-zero\nstdout=${stdout}\nstderr=${stderr}`);
-    if (!stdout.includes("Peer closed the notepad.")) {
-      throw new Error(`native host did not observe browser leave\nstdout=${stdout}\nstderr=${stderr}`);
-    }
     if (logs.length) throw new Error(`native host->web note browser logs:\n${logs.join("\n")}`);
+    if (later.logs.length) throw new Error(`native host->later web note browser logs:\n${later.logs.join("\n")}`);
     console.log("ok native host->web note");
   } finally {
     await stopProc(native.proc);
@@ -1186,7 +1168,10 @@ async function webHostToNativeNote(browser) {
     const codeAfterQuit = await withTimeout("native note join exit", 10000, () => waitProc(native.proc));
     const { stdout, stderr } = native.output();
     assertEqual(codeAfterQuit, 0, `native note join exited non-zero\nstdout=${stdout}\nstderr=${stderr}`);
-    await page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Peer left", null, { timeout: 10000 });
+    await waitForNoteConnected(page);
+    await page.fill("#noteEditor", "browser remains available");
+    await page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 4", null, { timeout: 10000 });
+    await page.click("#leaveNote");
     if (logs.length) throw new Error(`web host->native note browser logs:\n${logs.join("\n")}`);
     console.log("ok web host->native note");
   } finally {
@@ -1222,28 +1207,42 @@ async function webToWebNote(browser) {
   await join.page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 3", null, { timeout: 10000 });
 
   await host.page.click("#leaveNote");
-  await join.page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Peer left", null, { timeout: 10000 });
+  await waitForNoteConnected(join.page);
+  await join.page.fill("#noteEditor", "still available while alone");
+  await join.page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 4", null, { timeout: 10000 });
+  await join.page.click("#leaveNote");
+  await join.page.evaluate(() => localStorage.clear());
+
+  const later = await newPage(browser, `${baseURL}/#n=${code}&p=Browser+Board`);
+  await waitForNoteConnected(later.page);
+  await waitForNoteText(later.page, "still available while alone");
+  await later.page.click("#leaveNote");
   if (host.logs.length) throw new Error(`web note host browser logs:\n${host.logs.join("\n")}`);
   if (join.logs.length) throw new Error(`web note join browser logs:\n${join.logs.join("\n")}`);
+  if (later.logs.length) throw new Error(`web note later browser logs:\n${later.logs.join("\n")}`);
   console.log("ok web->web note");
 }
 
-async function webNoteProtocolMismatch(browser) {
-  console.log("start web note protocol mismatch");
+async function webPersistentNoteIsolation(browser) {
+  console.log("start web persistent note isolation");
   const code = randomPairingCode();
-  const note = await newPage(browser);
-  await note.page.evaluate((fixedCode) => { window.generateCode = () => fixedCode; }, code);
-  await note.page.click('button[data-tab="note"]');
-  await note.page.click("#hostNote");
+  const first = await newPage(browser);
+  await first.page.evaluate((fixedCode) => { window.generateCode = () => fixedCode; }, code);
+  await first.page.click('button[data-tab="note"]');
+  await first.page.fill("#notePad", "First Pad");
+  await first.page.click("#hostNote");
+  await waitForNoteConnected(first.page);
+  await first.page.fill("#noteEditor", "first pad secret");
+  await first.page.waitForFunction(() => document.querySelector("#noteState")?.textContent === "Synced revision 1", null, { timeout: 10000 });
 
-  const transfer = await newPage(browser, `${baseURL}/#c=${code}`);
-  await Promise.all([
-    note.page.waitForFunction(() => (document.querySelector("#log")?.textContent || "").includes("protocol mismatch"), null, { timeout: 10000 }),
-    transfer.page.waitForFunction(() => (document.querySelector("#log")?.textContent || "").includes("protocol mismatch"), null, { timeout: 10000 }),
-  ]);
-  if (note.logs.length) throw new Error(`note mismatch host browser logs:\n${note.logs.join("\n")}`);
-  if (transfer.logs.length) throw new Error(`note mismatch receive browser logs:\n${transfer.logs.join("\n")}`);
-  console.log("ok web note protocol mismatch");
+  const isolated = await newPage(browser, `${baseURL}/#n=${code}&p=Second+Pad`);
+  await waitForNoteConnected(isolated.page);
+  assertEqual(await isolated.page.locator("#noteEditor").inputValue(), "", "persistent note pad isolation failed");
+  await first.page.click("#leaveNote");
+  await isolated.page.click("#leaveNote");
+  if (first.logs.length) throw new Error(`first persistent note browser logs:\n${first.logs.join("\n")}`);
+  if (isolated.logs.length) throw new Error(`isolated persistent note browser logs:\n${isolated.logs.join("\n")}`);
+  console.log("ok web persistent note isolation");
 }
 
 async function webProtocolGuards(browser) {
@@ -1854,7 +1853,7 @@ async function webFolderToNative(browser) {
     await runSmoke(browser, "native host->web note", 45000, nativeHostToWebNote);
     await runSmoke(browser, "web host->native note", 45000, webHostToNativeNote);
     await runSmoke(browser, "web->web note", 45000, webToWebNote);
-    await runSmoke(browser, "web note protocol mismatch", 20000, webNoteProtocolMismatch);
+    await runSmoke(browser, "web persistent note isolation", 20000, webPersistentNoteIsolation);
     await runSmoke(browser, "web error handling", 10000, webErrorHandling);
     await runSmoke(browser, "web cancel handling", 10000, webCancelHandling);
     await runSmoke(browser, "web->native resume file", 45000, webToNativeResumeFile);

@@ -129,7 +129,7 @@ func TestTUIFormShowsNotepadAndRejectsInvalidJoinCode(t *testing.T) {
 		t.Fatalf("invalid join state: screen=%d err=%q command=%v", model.screen, model.err, command)
 	}
 	view := model.View()
-	for _, expected := range []string{"Notepad", "Role", "join code", "Pad", "Join notepad"} {
+	for _, expected := range []string{"Notepad", "Role", "open code", "Pad", "Open notepad"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("notepad form missing %q:\n%s", expected, view)
 		}
@@ -142,7 +142,7 @@ func TestTUINotepadHostEditsSyncsClearsAndLeaves(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{WebURL: "https://kigo.example"},
-		func(context.Context, string, bool) (localWebNotePeer, error) {
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
 			return peer, nil
 		},
 	)
@@ -261,7 +261,7 @@ func TestTUINotepadViewFitsCommonTerminal(t *testing.T) {
 		Host:    true,
 		Code:    "K7M9Q2",
 		Link:    "https://kigo.example/#n=K7M9Q2",
-		Status:  "waiting",
+		Status:  "opening",
 	}
 	model.resizeNoteEditor()
 	view := model.View()

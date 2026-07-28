@@ -6,6 +6,10 @@ const NOTE_DEBOUNCE_MS = 250;
 const NOTE_DRAFT_STORAGE_PREFIX = "kigo-note-draft-v1:";
 const NOTE_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NOTE_DRAFT_MAX_ENTRIES = 3;
+const NOTE_PERSISTENT_PROTOCOL_VERSION = 1;
+const NOTE_PERSISTENT_RECORD_VERSION = 1;
+const NOTE_PERSISTENT_KEY_INFO = "kigo-note-store-v1";
+const NOTE_PERSISTENT_RECONNECT_ATTEMPTS = 3;
 
 const noteCodeEl = document.querySelector("#noteCode");
 const notePadEl = document.querySelector("#notePad");
@@ -72,12 +76,10 @@ async function runBrowserNote(mode, requestedCode, requestedPad, task) {
   noteCodeEl.value = code;
   notePadEl.value = pad;
   noteEditorEl.value = "";
-  noteStateEl.textContent = host ? "Waiting for peer" : "Joining";
+  noteStateEl.textContent = "Opening";
   if (host) showNoteShare(code, pad);
-  log(host ? `Waiting for notepad peer with code ${code}, pad ${pad}...` : `Joining notepad ${code}, pad ${pad}...`);
+  log(`Opening persistent notepad ${code}, pad ${pad}...`);
 
-  const token = await roomToken(code);
-  const role = host ? "sender" : "receiver";
   const draft = await createBrowserNoteDraftStore(code, host ? "host" : "join", pad);
   const restoredDraft = await draft.load();
   const workspace = { document: restoredDraft || emptyNoteDocument(pad), draft };
@@ -86,38 +88,287 @@ async function runBrowserNote(mode, requestedCode, requestedPad, task) {
     noteStateEl.textContent = `Recovered draft revision ${restoredDraft.revision}`;
     log(`Recovered encrypted draft revision ${restoredDraft.revision}.`);
   }
-  const negotiation = await negotiateBrowserRoute(token, role, task, NOTE_PROTOCOL);
-  const directFirst = negotiation?.pair === "web-web";
-  if (directFirst) log("Trying LAN host-to-host before STUN and TURN...");
-
   try {
-    await globalThis.kigoWebRTC.runPeerSession({
-      role,
-      token,
-      task,
-      protocol: NOTE_PROTOCOL,
-      directFirst,
-      onRetry: ({ nextAttempt, nextMode, maxAttempts, diagnostics }) => {
+    for (let attempt = 1; attempt <= NOTE_PERSISTENT_RECONNECT_ATTEMPTS; attempt++) {
+      try {
+        const connection = await openPersistentBrowserNote(code, pad, task);
+        await syncPersistentBrowserNote(connection, workspace, code, pad);
+        log(attempt === 1 ? "Encrypted persistent notepad available." : "Encrypted persistent notepad reconnected.");
+        const result = await runPersistentBrowserNoteEditor(connection, workspace, code, pad, task);
+        if (result === "leave") return;
+        throw new Error("persistent notepad connection closed");
+      } catch (err) {
+        if (task.canceled || attempt >= NOTE_PERSISTENT_RECONNECT_ATTEMPTS) throw err;
         setNoteConnected(false);
-        noteStateEl.textContent = `Reconnecting ${nextAttempt}/${maxAttempts}`;
-        const route = nextMode === "direct" ? " with STUN" : nextMode === "relay" ? " through TURN" : "";
-        const ice = nextMode === "direct" || nextMode === "relay" ? ` (${formatICEDiagnostics(diagnostics)})` : "";
-        log(`Notepad connection interrupted${ice}. Reconnecting ${nextAttempt}/${maxAttempts}${route}...`);
-      },
-    }, async ({ attempt, pipe }) => {
-      const session = host
-        ? await initNoteHostSession(pipe, code)
-        : await initNoteJoinSession(pipe, code);
-      await syncBrowserNoteWorkspace(pipe, session, workspace, pad, host);
-      log(attempt === 1 ? "Encrypted notepad connected." : "Encrypted notepad reconnected.");
-      await runNoteEditor(pipe, session, task, pad, workspace);
-      globalThis.kigoWebRTC.clearReconnectToken(token, role, NOTE_PROTOCOL);
-    });
+        noteStateEl.textContent = `Reconnecting ${attempt + 1}/${NOTE_PERSISTENT_RECONNECT_ATTEMPTS}`;
+        log(`Notepad connection interrupted. Reconnecting ${attempt + 1}/${NOTE_PERSISTENT_RECONNECT_ATTEMPTS}...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
   } finally {
     setNoteConnected(false);
     activeNoteClear = null;
     activeNoteLeave = null;
   }
+}
+
+async function openPersistentBrowserNote(code, pad, task) {
+  const token = await roomToken(code);
+  const padToken = await persistentBrowserNotePadToken(pad);
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${scheme}//${location.host}/api/note-sync/${token}/${padToken}`);
+  const removeCleanup = task.addCleanup(() => socket.close());
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("persistent notepad connection timed out")), 10000);
+      socket.addEventListener("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+      socket.addEventListener("error", () => {
+        clearTimeout(timeout);
+        reject(new Error("persistent notepad connection failed"));
+      }, { once: true });
+    });
+    const inbox = createPersistentBrowserNoteInbox(socket);
+    const initial = await nextPersistentBrowserNoteMessage(inbox);
+    return { socket, inbox, generation: initial.generation, initial, removeCleanup };
+  } catch (err) {
+    removeCleanup();
+    socket.close();
+    throw err;
+  }
+}
+
+async function syncPersistentBrowserNote(connection, workspace, code, pad) {
+  const remote = await persistentBrowserNoteDocument(connection.initial, code, pad);
+  connection.initial = null;
+  if (remote && compareNoteDocuments(remote, workspace.document) > 0) {
+    workspace.document = remote;
+    noteEditorEl.value = remote.text;
+    await workspace.draft.save(remote);
+  } else if (workspace.document.revision > 0 && (!remote || compareNoteDocuments(workspace.document, remote) > 0)) {
+    await putPersistentBrowserNote(connection, code, workspace.document);
+  }
+}
+
+async function runPersistentBrowserNoteEditor(connection, workspace, code, pad, task) {
+  let documentState = workspace.document;
+  let debounceTimer = null;
+  let finishLocal;
+  let failLocal;
+  let sendPending = Promise.resolve();
+  const localDone = new Promise((resolve, reject) => {
+    finishLocal = resolve;
+    failLocal = reject;
+  });
+  const removeCancel = task.addCleanup(() => finishLocal("canceled"));
+  const publish = () => {
+    debounceTimer = null;
+    const current = documentState;
+    sendPending = sendPending.then(() => putPersistentBrowserNote(connection, code, current));
+    sendPending.catch(failLocal);
+  };
+  const onInput = () => {
+    try {
+      documentState = updateLocalNote(documentState, noteEditorEl.value);
+      workspace.document = documentState;
+      workspace.draft.save(documentState);
+    } catch (err) {
+      failLocal(err);
+      return;
+    }
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(publish, NOTE_DEBOUNCE_MS);
+    noteStateEl.textContent = `Editing revision ${documentState.revision}`;
+  };
+  const clear = () => {
+    clearTimeout(debounceTimer);
+    noteEditorEl.value = "";
+    onInput();
+    clearTimeout(debounceTimer);
+    publish();
+  };
+  const leave = () => {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      publish();
+    }
+    sendPending.then(() => finishLocal("leave"), failLocal);
+  };
+
+  noteEditorEl.addEventListener("input", onInput);
+  activeNoteClear = clear;
+  activeNoteLeave = leave;
+  setNoteConnected(true);
+  noteStateEl.textContent = `Available: ${pad}`;
+
+  const receiveLoop = (async () => {
+    for (;;) {
+      const message = await nextPersistentBrowserNoteMessage(connection.inbox);
+      if (message.generation < connection.generation) continue;
+      connection.generation = message.generation;
+      const incoming = await persistentBrowserNoteDocument(message, code, pad);
+      if (!incoming) {
+        if (documentState.revision > 0) await putPersistentBrowserNote(connection, code, documentState);
+        continue;
+      }
+      const order = compareNoteDocuments(incoming, documentState);
+      if (order > 0) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+        documentState = incoming;
+        workspace.document = incoming;
+        await workspace.draft.save(incoming);
+        noteEditorEl.value = incoming.text;
+        noteStateEl.textContent = `Remote revision ${incoming.revision}`;
+      } else if (order < 0) {
+        await putPersistentBrowserNote(connection, code, documentState);
+      } else {
+        noteStateEl.textContent = `Synced revision ${incoming.revision}`;
+      }
+    }
+  })();
+
+  try {
+    return await Promise.race([receiveLoop, localDone]);
+  } finally {
+    removeCancel();
+    connection.removeCleanup();
+    clearTimeout(debounceTimer);
+    noteEditorEl.removeEventListener("input", onInput);
+    connection.socket.close();
+    await sendPending.catch(() => {});
+    await workspace.draft.flush();
+  }
+}
+
+async function putPersistentBrowserNote(connection, code, document) {
+  if (connection.socket.readyState !== WebSocket.OPEN) throw new Error("persistent notepad connection closed");
+  const record = await sealPersistentBrowserNote(code, document);
+  connection.socket.send(JSON.stringify({
+    type: "put",
+    version: NOTE_PERSISTENT_PROTOCOL_VERSION,
+    base_generation: connection.generation,
+    record,
+  }));
+}
+
+function createPersistentBrowserNoteInbox(socket) {
+  const messages = [];
+  const waiters = [];
+  let failure = null;
+  const deliver = (entry) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter(entry);
+    else messages.push(entry);
+  };
+  socket.addEventListener("message", (event) => {
+    try {
+      deliver({ message: JSON.parse(event.data) });
+    } catch (err) {
+      deliver({ error: err });
+    }
+  });
+  socket.addEventListener("close", () => {
+    failure = new Error("persistent notepad connection closed");
+    while (waiters.length) waiters.shift()({ error: failure });
+  });
+  socket.addEventListener("error", () => {
+    failure = new Error("persistent notepad connection failed");
+    while (waiters.length) waiters.shift()({ error: failure });
+  });
+  return {
+    async next() {
+      const entry = messages.length ? messages.shift() : failure
+        ? { error: failure }
+        : await new Promise((resolve) => waiters.push(resolve));
+      if (entry.error) throw entry.error;
+      return entry.message;
+    },
+  };
+}
+
+async function nextPersistentBrowserNoteMessage(inbox) {
+  const message = await inbox.next();
+  if (message?.version !== NOTE_PERSISTENT_PROTOCOL_VERSION) {
+    throw new Error(`unsupported persistent note protocol version ${message?.version}`);
+  }
+  if (message.type === "error") throw new Error(message.error || "persistent notepad error");
+  if (message.type !== "state" || !Number.isSafeInteger(message.generation) || message.generation < 0) {
+    throw new Error("invalid persistent notepad state");
+  }
+  return message;
+}
+
+async function persistentBrowserNoteDocument(message, code, pad) {
+  if (!message.record) {
+    if (message.generation !== 0) throw new Error("persistent notepad state is missing its record");
+    return null;
+  }
+  const record = message.record;
+  if (record.version !== NOTE_PERSISTENT_RECORD_VERSION) {
+    throw new Error(`unsupported persistent note record version ${record.version}`);
+  }
+  const salt = globalThis.KigoSecure.base64ToBytes(record.salt);
+  const nonce = globalThis.KigoSecure.base64ToBytes(record.nonce);
+  const ciphertext = globalThis.KigoSecure.base64ToBytes(record.ciphertext);
+  if (salt.length !== 16 || nonce.length !== 12 || ciphertext.length < 16) {
+    throw new Error("invalid persistent notepad encryption parameters");
+  }
+  const key = await persistentBrowserNoteKey(code, salt);
+  const plaintext = await crypto.subtle.decrypt({
+    name: "AES-GCM",
+    iv: nonce,
+    additionalData: persistentBrowserNoteAAD(pad),
+    tagLength: 128,
+  }, key, ciphertext);
+  const document = JSON.parse(new TextDecoder().decode(plaintext));
+  validateNoteFrame(noteFrame(document.text === "" ? "clear" : "update", document));
+  if (normalizeNotePad(document.pad) !== pad) throw new Error("persistent notepad pad mismatch");
+  return noteDocument(document);
+}
+
+async function sealPersistentBrowserNote(code, document) {
+  validateNoteFrame(noteFrame(document.text === "" ? "clear" : "update", document));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const key = await persistentBrowserNoteKey(code, salt);
+  const ciphertext = await crypto.subtle.encrypt({
+    name: "AES-GCM",
+    iv: nonce,
+    additionalData: persistentBrowserNoteAAD(document.pad),
+    tagLength: 128,
+  }, key, new TextEncoder().encode(JSON.stringify(document)));
+  return {
+    version: NOTE_PERSISTENT_RECORD_VERSION,
+    salt: globalThis.KigoSecure.bytesToBase64(salt),
+    nonce: globalThis.KigoSecure.bytesToBase64(nonce),
+    ciphertext: globalThis.KigoSecure.bytesToBase64(new Uint8Array(ciphertext)),
+  };
+}
+
+async function persistentBrowserNoteKey(code, salt) {
+  const baseKey = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(normalizeCode(code)), "HKDF", false, ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey({
+    name: "HKDF",
+    hash: "SHA-256",
+    salt,
+    info: new TextEncoder().encode(NOTE_PERSISTENT_KEY_INFO),
+  }, baseKey, { name: "AES-GCM", length: 128 }, false, ["encrypt", "decrypt"]);
+}
+
+function persistentBrowserNoteAAD(pad) {
+  return new TextEncoder().encode(`${NOTE_PERSISTENT_KEY_INFO}\0${normalizeNotePad(pad)}`);
+}
+
+async function persistentBrowserNotePadToken(pad) {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(`kigo-note-pad:${normalizeNotePad(pad)}`),
+  ));
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 async function initNoteHostSession(pipe, code) {

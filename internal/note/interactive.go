@@ -33,7 +33,13 @@ type receiveResult struct {
 	err   error
 }
 
-func RunInteractive(ctx context.Context, session *Session, opts InteractiveOptions) error {
+type InteractiveSession interface {
+	Send(context.Context, Frame) error
+	Recv(context.Context) (Frame, error)
+	SyncWorkspace(context.Context, *Workspace, string) ([]Document, error)
+}
+
+func RunInteractive(ctx context.Context, session InteractiveSession, opts InteractiveOptions) error {
 	if session == nil {
 		return transport.ErrClosed
 	}

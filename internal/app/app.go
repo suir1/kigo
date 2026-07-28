@@ -236,8 +236,8 @@ func newRelayCommand(g *globalOptions) *cobra.Command {
 }
 
 func newServeCommand() *cobra.Command {
-	var listen, webDir, publicURL, nativeRelay, nativeRelaySecret, turnURL, turnListen, turnPublicIP, turnUser, turnPass, turnSecret, turnRealm, tlsCert, tlsKey, trustedProxies string
-	var nativeRelayCredentialTTL, turnCredentialTTL, turnEgressWindow time.Duration
+	var listen, webDir, publicURL, nativeRelay, nativeRelaySecret, turnURL, turnListen, turnPublicIP, turnUser, turnPass, turnSecret, turnRealm, tlsCert, tlsKey, trustedProxies, noteStore string
+	var nativeRelayCredentialTTL, turnCredentialTTL, turnEgressWindow, noteTTL time.Duration
 	var signalRequestsPerMinute, turnCredentialsPerMinute, turnMaxAllocations, turnMaxAllocationsPerUser, turnMaxAllocationsPerIP, turnMinPort, turnMaxPort int
 	var turnMaxEgressMiB, turnMaxEgressMiBPerUser, turnMaxEgressMiBPerIP int64
 	var checkConfig bool
@@ -262,7 +262,12 @@ func newServeCommand() *cobra.Command {
 			tlsCert = flagEnvString(cmd, "tls-cert", tlsCert, "KIGO_TLS_CERT")
 			tlsKey = flagEnvString(cmd, "tls-key", tlsKey, "KIGO_TLS_KEY")
 			trustedProxies = flagEnvString(cmd, "trusted-proxies", trustedProxies, "KIGO_TRUSTED_PROXIES")
+			noteStore = flagEnvString(cmd, "note-store", noteStore, "KIGO_NOTE_STORE")
 			var err error
+			noteTTL, err = flagEnvDuration(cmd, "note-ttl", noteTTL, "KIGO_NOTE_TTL")
+			if err != nil {
+				return err
+			}
 			nativeRelayCredentialTTL, err = flagEnvDuration(cmd, "native-relay-credential-ttl", nativeRelayCredentialTTL, "KIGO_NATIVE_RELAY_CREDENTIAL_TTL")
 			if err != nil {
 				return err
@@ -354,6 +359,8 @@ func newServeCommand() *cobra.Command {
 				TURNMaxEgressBytesPerIP:   turnMaxEgressBytesPerIP,
 				TLSCert:                   tlsCert,
 				TLSKey:                    tlsKey,
+				NoteStore:                 noteStore,
+				NoteTTL:                   noteTTL,
 				SignalRequestsPerMinute:   signalRequestsPerMinute,
 				TrustedProxies:            trustedProxies,
 			})
@@ -395,6 +402,8 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "TLS certificate path")
 	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "TLS private key path")
 	cmd.Flags().StringVar(&trustedProxies, "trusted-proxies", "", "comma-separated proxy IPs or CIDRs trusted to set X-Forwarded-For")
+	cmd.Flags().StringVar(&noteStore, "note-store", "", "directory for encrypted persistent notepad snapshots; empty keeps snapshots in memory")
+	cmd.Flags().DurationVar(&noteTTL, "note-ttl", 30*24*time.Hour, "persistent notepad lifetime after its latest update")
 	cmd.Flags().BoolVar(&checkConfig, "check-config", false, "validate configuration and exit without listening")
 	return cmd
 }

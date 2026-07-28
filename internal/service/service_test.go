@@ -170,6 +170,8 @@ func TestHandleICERateLimitAndMethods(t *testing.T) {
 func TestHandleHealthReturnsRuntimeStatusWithoutSecrets(t *testing.T) {
 	s := New(Config{
 		PublicURL:                "https://kigo.example",
+		NoteStore:                t.TempDir(),
+		NoteTTL:                  2 * time.Hour,
 		NativeRelay:              "relay.example:9000",
 		NativeRelaySecret:        "native-relay-secret",
 		NativeRelayCredentialTTL: 30 * time.Minute,
@@ -203,6 +205,12 @@ func TestHandleHealthReturnsRuntimeStatusWithoutSecrets(t *testing.T) {
 			Active  int `json:"active"`
 			Clients int `json:"clients"`
 		} `json:"rooms"`
+		Notepad struct {
+			Configured bool  `json:"configured"`
+			Documents  int   `json:"documents"`
+			Clients    int   `json:"clients"`
+			TTLMS      int64 `json:"ttl_ms"`
+		} `json:"notepad"`
 		NativeRelay struct {
 			Configured      bool   `json:"configured"`
 			Endpoint        string `json:"endpoint"`
@@ -234,11 +242,14 @@ func TestHandleHealthReturnsRuntimeStatusWithoutSecrets(t *testing.T) {
 	if body.Version.Version == "" || body.Version.Go == "" {
 		t.Fatalf("missing version info: %#v", body.Version)
 	}
-	if len(body.Capabilities) != 3 || body.Capabilities[1] != "direct-rendezvous-v1" {
+	if len(body.Capabilities) != 4 || body.Capabilities[1] != "direct-rendezvous-v1" || body.Capabilities[3] != "persistent-note-v1" {
 		t.Fatalf("capabilities = %#v", body.Capabilities)
 	}
 	if body.Rooms.Active != 1 || body.Rooms.Clients != 1 {
 		t.Fatalf("room stats = %#v", body.Rooms)
+	}
+	if !body.Notepad.Configured || body.Notepad.Documents != 0 || body.Notepad.Clients != 0 || body.Notepad.TTLMS != (2*time.Hour).Milliseconds() {
+		t.Fatalf("notepad stats = %#v", body.Notepad)
 	}
 	if !body.NativeRelay.Configured ||
 		body.NativeRelay.Endpoint != "relay.example:9000" ||
@@ -576,6 +587,7 @@ func TestBuiltInTURNAcceptsIssuedTemporaryCredentials(t *testing.T) {
 func TestValidateServiceConfigRejectsUnsafeValues(t *testing.T) {
 	tests := []Config{
 		{SignalRequestsPerMinute: -2},
+		{NoteTTL: -time.Second},
 		{TURNCredentialTTL: 30 * time.Second},
 		{TURNCredentialTTL: maxTURNCredentialTTL + time.Second},
 		{TURNCredentialsPerMinute: -2},
