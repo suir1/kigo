@@ -22,24 +22,21 @@ while native/browser and browser/browser sessions receive TURN through ICE.
 
 ## Client setup
 
-The IP-only service currently uses a self-signed certificate. Copy its public
-certificate to a stable local path and save both settings:
+The IP-only service uses a publicly trusted Let's Encrypt IP address
+certificate. Native clients only need to save the service URL; browsers can
+open the same URL without installing a CA or bypassing a certificate warning:
 
 ```sh
-scp kiko_vps:/etc/kigo/tls/server.crt "$HOME/Library/Application Support/kigo/vps-ca.crt"
 kigo config set service https://106.53.170.243:1001
-kigo config set tls-ca "$HOME/Library/Application Support/kigo/vps-ca.crt"
+kigo config unset tls-ca
 kigo route --pair native-web --json
 ```
 
-The current certificate has SHA-256 fingerprint
-`6F:AB:48:3A:B4:71:64:0B:BF:82:BB:00:58:7F:E6:FE:43:C9:01:90:41:BC:D3:12:57:CA:22:B1:D2:99:80:A4`
-and expires on 2027-07-20. Verify the fingerprint over a trusted channel before
-installing the certificate on another device.
-
-Browsers do not use Kigo's saved CA path. Until the service has a domain and a
-publicly trusted certificate, browser users must explicitly trust or proceed
-past the self-signed certificate warning.
+The certificate contains the critical IP SAN `106.53.170.243`, is issued by
+Let's Encrypt `YE1`, and has SHA-256 fingerprint
+`88:3A:FB:AC:01:4F:DC:28:A1:56:21:89:AF:06:BF:67:5D:CF:14:79:B9:32:AD:5F:FE:E3:9E:7A:15:C6:09:C0`.
+IP certificates are intentionally short-lived, so the fingerprint and expiry
+change automatically on renewal.
 
 ## Operations
 
@@ -49,6 +46,8 @@ ssh kiko_vps 'systemctl status kigo-relay.service'
 ssh kiko_vps 'journalctl -u kigo-public.service -n 100 --no-pager'
 ssh kiko_vps 'journalctl -u kigo-relay.service -n 100 --no-pager'
 ssh kiko_vps 'systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'systemctl list-timers kigo-certbot-renew.timer --no-pager'
+ssh kiko_vps 'journalctl -u kigo-certbot-renew.service -n 100 --no-pager'
 ```
 
 Server files:
@@ -60,6 +59,11 @@ Server files:
 - `/etc/kigo/kigo-relay.env`
 - `/etc/kigo/tls/server.crt`
 - `/etc/kigo/tls/server.key`
+- `/opt/certbot/`
+- `/etc/letsencrypt/live/106.53.170.243/`
+- `/etc/letsencrypt/renewal-hooks/deploy/kigo-public`
+- `/etc/systemd/system/kigo-certbot-renew.service`
+- `/etc/systemd/system/kigo-certbot-renew.timer`
 
 The environment files are readable only by root and the `kigo` group. They
 contain matching native relay token secrets and the TURN credential secret and
@@ -123,6 +127,15 @@ native route.
 After these transfers, both systemd units were active; `1001/tcp`, `5140/tcp`,
 and `5140/udp` were listening. `/api/health` reported the release version, zero
 active TURN allocations, zero dropped bytes, and zero quota failures.
+
+On 2026-07-28, the self-signed certificate was replaced with a publicly trusted
+Let's Encrypt IP certificate. Chromium text and random 256 KiB file scenarios
+passed without ignoring TLS errors in both natural ICE and forced-TURN modes.
+Natural ICE selected direct `srflx/srflx` UDP, while forced TURN selected
+`relay/relay` UDP. The redacted local evidence is in
+`artifacts/vps-ip-cert-20260728-natural/matrix.json` and
+`artifacts/vps-ip-cert-20260728-forced-turn/matrix.json`. Post-test health again
+reported zero active allocations, dropped bytes, and quota failures.
 
 The persistent service was verified on 2026-07-20 with forced relay-only ICE.
 Chromium transferred encrypted text and a random 256 KiB file with matching
@@ -226,17 +239,45 @@ the public matrix is recorded in `artifacts/vps-parallel2-default-20260723/matri
 
 ## Public certificate status
 
-The service remains on the self-signed IP certificate described above. On 2026-07-22, ACME validation was
-tested with `106-53-170-243.sslip.io`, `106-53-170-243.nip.io`, and `106.53.170.243.nip.io`. The hyphenated
-aliases were redirected to a DNSPod block page, while Let's Encrypt connections to the otherwise-correct IP
-were reset by the cloud network on both HTTP-01 and TLS-ALPN-01. No certificate was issued and the temporary
-ACME client and cron entry were removed.
+Let's Encrypt made short-lived IP address certificates generally available in
+2026, so this deployment no longer needs a domain, `sslip.io`, or `nip.io`.
+Certbot 5.7.0 is installed in `/opt/certbot` and requests the mandatory
+`shortlived` profile with `--ip-address 106.53.170.243`. Certificates are valid
+for about 160 hours.
 
-Do not inject one of these aliases as a production client default until it has a trusted certificate and a
-fresh public browser matrix. Release builds can inject a future canonical origin without changing source:
+HTTP-01 uses `/opt/speidio/dist` as its webroot because the existing port 80
+server already serves files below `.well-known/acme-challenge`. The Kigo service
+continues to terminate trusted TLS directly on port 1001. A systemd timer checks
+renewal twice daily with up to one hour of random delay. Certbot's deploy hook
+copies the renewed full chain and private key into `/etc/kigo/tls` with the
+existing ownership and restarts only `kigo-public.service`.
+
+The initial issuance used:
 
 ```sh
-KIGO_DEFAULT_SERVICE_URL=https://kigo.example \
-KIGO_VERSION=v0.1.0 \
-  ./scripts/build_release.sh
+sudo apt-get install --yes python3-venv
+sudo python3 -m venv /opt/certbot
+sudo /opt/certbot/bin/pip install certbot==5.7.0
+sudo /opt/certbot/bin/certbot certonly \
+  --preferred-profile shortlived \
+  --webroot --webroot-path /opt/speidio/dist \
+  --ip-address 106.53.170.243 \
+  --agree-tos --register-unsafely-without-email --non-interactive
 ```
+
+Install `deploy/certbot-kigo-deploy-hook.sh` under
+`/etc/letsencrypt/renewal-hooks/deploy/kigo-public`, and install the two
+`deploy/kigo-certbot-renew.*` units under `/etc/systemd/system`. Then run
+`systemctl daemon-reload` and enable `kigo-certbot-renew.timer`.
+
+Validate the complete renewal path with:
+
+```sh
+ssh kiko_vps 'sudo /opt/certbot/bin/certbot renew --dry-run --no-random-sleep-on-renew'
+curl --fail https://106.53.170.243:1001/api/health
+```
+
+The previous self-signed certificate and key are retained as
+`/etc/kigo/tls/server.crt.self-signed-20260728` and
+`/etc/kigo/tls/server.key.self-signed-20260728`. They are an emergency service
+rollback only; browsers will show a certificate warning after rollback.
