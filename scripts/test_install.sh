@@ -33,6 +33,27 @@ linux=$(
 expect_line "$linux" "platform=linux-amd64"
 expect_line "$linux" "archive=kigo-v1.2.3-linux-amd64.tar.gz"
 
+mock_bin="$WORK/mock-bin"
+mkdir -p "$mock_bin"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'for arg do url=$arg; done' \
+  'case "$url" in' \
+  '  */releases/latest) exit 22 ;;' \
+  '  */releases\?per_page=100) printf '\''[{"tag_name":"v1.2.3-alpha.2","prerelease":true}]\n'\'' ;;' \
+  '  *) exit 22 ;;' \
+  'esac' >"$mock_bin/curl"
+chmod +x "$mock_bin/curl"
+prerelease=$(
+  PATH="$mock_bin:$PATH" \
+  KIGO_INSTALL_DRY_RUN=1 \
+  KIGO_TEST_UNAME_S=Linux \
+  KIGO_TEST_UNAME_M=x86_64 \
+    "$ROOT/scripts/install.sh"
+)
+expect_line "$prerelease" "version=v1.2.3-alpha.2"
+expect_line "$prerelease" "archive=kigo-v1.2.3-alpha.2-linux-amd64.tar.gz"
+
 version=v9.8.7-test
 case "$(uname -s)" in
   Darwin) os=darwin ;;

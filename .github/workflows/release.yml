@@ -43,12 +43,25 @@ jobs:
     timeout-minutes: 30
     env:
       RELEASE_TAG: ${{ github.ref_name }}
+      KIGO_DEFAULT_SERVICE_URL: ${{ vars.KIGO_DEFAULT_SERVICE_URL }}
     steps:
       - name: Validate release tag
         shell: bash
         run: |
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "release tag must look like v1.2.3 or v1.2.3-rc.1: $RELEASE_TAG" >&2
+            exit 2
+          fi
+
+      - name: Validate public service default
+        shell: bash
+        run: |
+          if [[ -z "$KIGO_DEFAULT_SERVICE_URL" ]]; then
+            echo "repository variable KIGO_DEFAULT_SERVICE_URL must be configured for public releases" >&2
+            exit 2
+          fi
+          if [[ ! "$KIGO_DEFAULT_SERVICE_URL" =~ ^https?://[^/@[:space:]?#]+(/[^[:space:]?#]*)?$ || "$KIGO_DEFAULT_SERVICE_URL" == */ ]]; then
+            echo "KIGO_DEFAULT_SERVICE_URL must be an HTTP(S) URL without credentials, query, fragment, whitespace, or trailing slash" >&2
             exit 2
           fi
 

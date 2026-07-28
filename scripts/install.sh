@@ -48,13 +48,33 @@ if [ -z "$version" ]; then
       ;;
   esac
   version=$(
-    curl -fsSL \
+    curl -fsSL 2>/dev/null \
       -H "Accept: application/vnd.github+json" \
       -H "User-Agent: kigo-install" \
       "https://api.github.com/repos/$repo/releases/latest" |
-      sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
-      head -n 1
+      awk 'match($0, /"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"/) {
+        value = substr($0, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", value)
+        sub(/"$/, "", value)
+        print value
+        exit
+      }'
   ) || version=
+  if [ -z "$version" ]; then
+    version=$(
+      curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: kigo-install" \
+        "https://api.github.com/repos/$repo/releases?per_page=100" |
+        awk 'match($0, /"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"/) {
+          value = substr($0, RSTART, RLENGTH)
+          sub(/^[^:]*:[[:space:]]*"/, "", value)
+          sub(/"$/, "", value)
+          print value
+          exit
+        }'
+    ) || version=
+  fi
   [ -n "$version" ] || die "could not determine the latest release; set KIGO_VERSION explicitly"
 fi
 

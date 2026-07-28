@@ -68,7 +68,19 @@ if (-not $Version) {
         $Version = $release.tag_name
     }
     catch {
-        throw "Could not determine the latest release; set KIGO_VERSION explicitly. $($_.Exception.Message)"
+    }
+    if (-not $Version) {
+        try {
+            $releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -Headers @{ Accept = "application/vnd.github+json"; "User-Agent" = "kigo-install" })
+            $release = $releases | Where-Object { $_.tag_name } | Select-Object -First 1
+            $Version = $release.tag_name
+        }
+        catch {
+            throw "Could not determine the latest release; set KIGO_VERSION explicitly. $($_.Exception.Message)"
+        }
+    }
+    if (-not $Version) {
+        throw "Could not determine the latest release; set KIGO_VERSION explicitly"
     }
 }
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
