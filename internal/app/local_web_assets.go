@@ -100,19 +100,19 @@ const localWebHTML = `<!doctype html>
           </div>
         </div>
         <div class="note-connect">
-          <button id="hostNote" class="primary compact" type="button">Host notepad</button>
+          <button id="hostNote" class="primary compact" type="button">Create notepad</button>
           <div class="note-join">
             <div class="note-fields">
               <div>
                 <label for="noteCode">Pairing code</label>
-                <input id="noteCode" maxlength="80" autocomplete="off" placeholder="Random for host">
+                <input id="noteCode" maxlength="80" autocomplete="off" placeholder="Random for create">
               </div>
               <div>
                 <label for="notePad">Pad</label>
                 <input id="notePad" maxlength="64" autocomplete="off" value="main">
               </div>
             </div>
-            <button id="joinNote" class="secondary-button" type="button">Join</button>
+            <button id="joinNote" class="secondary-button" type="button">Open</button>
           </div>
         </div>
         <div id="noteShareArea" class="note-share hidden">
@@ -952,7 +952,9 @@ function renderJob(job) {
 
 function noteStatusText(state) {
   let status = "Not connected";
-  if (state.status === "waiting") status = "Waiting for peer";
+  if (state.status === "opening") status = "Opening";
+  else if (state.status === "available") status = "Available";
+  else if (state.status === "waiting") status = "Waiting for peer";
   else if (state.status === "connecting") status = "Connecting";
   else if (state.status === "reconnecting") status = "Reconnecting";
   else if (state.status === "connected") status = "Connected";
@@ -984,9 +986,9 @@ function renderNote(state) {
   noteShareArea.classList.toggle("hidden", !(state.host && state.code));
   noteStatus.textContent = noteStatusText(state);
   noteStatus.className = "note-status";
-  if (state.status === "waiting" || state.status === "connecting" || state.status === "reconnecting" || state.status === "syncing") {
+  if (state.status === "opening" || state.status === "waiting" || state.status === "connecting" || state.status === "reconnecting" || state.status === "syncing") {
     noteStatus.classList.add("running");
-  } else if (state.status === "connected" || state.status === "synced") {
+  } else if (state.status === "available" || state.status === "connected" || state.status === "synced") {
     noteStatus.classList.add("done");
   } else if (state.status === "error") {
     noteStatus.classList.add("failed");

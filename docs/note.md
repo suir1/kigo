@@ -1,92 +1,104 @@
 # Shared Notepad
 
-Native and browser notepad sessions use the same five-minute pairing window as file and text transfers. Native
-clients can change it with `--pair-timeout`; the timeout is removed once the encrypted notepad session connects.
-After a network interruption, current native and browser clients retry the same code up to three total attempts.
-Native clients use `--no-reconnect`, `--reconnect-attempts`, and `--reconnect-delay` to control this behavior.
-
-`kigo note` is a live, bidirectional notepad for short text with an encrypted local draft cache. It uses
-the same route selection as native file transfer:
+`kigo note` is an asynchronous encrypted shared document. It does not wait for a second client and does not use
+the file-transfer TCP, relay, or WebRTC route. The first client can create or open a pad, edit immediately, leave,
+and recover the latest shared contents later. Other native or browser clients can open the same code and pad at
+any time while the snapshot remains available.
 
 ```sh
 kigo note host
 kigo note join K7M9Q2
 ```
 
-The host prints a six-character random pairing code by default, a native join command, and a browser link.
-The default pad uses `https://kigo.example/#n=K7M9Q2`; a custom pad uses a link such as
-`https://kigo.example/#n=K7M9Q2&p=Sprint+Notes`. The pad remains in the URL fragment and is not sent to the
-signaling service. The other peer can use either the native client or the web app's Notepad tab. Native/native sessions use the selected
-direct, relay, or WebRTC route. Any session containing a browser uses WebRTC.
-The transport is bidirectional even though rendezvous roles are named
-`sender` and `receiver`.
+`host` creates a random six-character code by default, or opens the existing document if that code and pad were
+already used. It prints a native command and a browser link. The default pad uses
+`https://kigo.example/#n=K7M9Q2`; a custom pad uses a link such as
+`https://kigo.example/#n=K7M9Q2&p=Sprint+Notes`.
 
-The loopback `kigo web` console also includes a Notepad tab. It hosts or joins
-one selected pad through the same native route selection and keeps the
-session in the local process. Its `/api/note/*` endpoints require the random
-console token. Text is sent peer-to-peer; the console stores only its own encrypted local draft and never uploads
-it to the signaling service.
+The public browser, native CLI, loopback `kigo web` console, and `kigo tui` all connect to the same persistent
+notepad service. Browser links keep the code and pad in the URL fragment, so browsers do not send either value in
+the initial HTTP request. The client derives hashed room and pad identifiers and opens:
 
-`kigo tui` exposes the same host/join and pad selection flow with a multiline editor. It publishes after a
-250 ms debounce; `Ctrl+S` publishes
-immediately, `Ctrl+L` clears the shared document, and Esc leaves the session.
+```text
+WS /api/note-sync/{room_token}/{pad_token}
+```
 
-Hosts can choose a 6-64 character alphanumeric or hyphen-separated mnemonic code with
-`kigo note host --code project-alpha-2026`. Browser, local web, and TUI hosts expose the same optional field.
+Once the WebSocket is available, the editor is enabled regardless of whether another client is online. Updates
+are broadcast to all connected clients. A client that opens later receives the latest encrypted snapshot. An
+interrupted client retries up to three total connection attempts by default; native reconnect behavior uses
+`--no-reconnect`, `--reconnect-attempts`, and `--reconnect-delay`.
 
-Inside the session:
+## User Interfaces
 
-- Enter a line to publish the complete contents of the selected pad.
-- `/show` prints the local document.
-- `/clear` publishes an empty document.
-- `/quit` closes the session.
-
-In the browser:
-
-- Host creates a code and a `#n=<code>` share link; custom pads add `&p=<pad>`.
-- Join accepts a generated or custom code and pad; opening either link form joins automatically.
-- Editor changes publish after a 250 ms debounce.
-- Clear publishes an empty document; Leave sends a final `bye`.
-
-The default pad is `main`. Use `--pad` to select another single pad name:
+Hosts can choose a 6-64 character alphanumeric or hyphen-separated mnemonic code:
 
 ```sh
+kigo note host --code project-alpha-2026
 kigo note --pad scratch host
 kigo note --pad scratch join K7M9Q2
 ```
 
-Native CLI, public browser, loopback web, and TUI sessions all select one pad when the session starts. Missing
-or empty pad values normalize to `main`, so old `#n=<code>` links remain compatible. The selected pad is locked
-while connected; leave the session before switching to another pad.
+The default pad is `main`. Missing or empty pad values normalize to `main`, so existing `#n=<code>` links remain
+valid. One client edits one selected pad at a time; leave before switching pads.
 
-The notepad protocol is separate from the file manifest protocol. It performs
-a small plaintext hello exchange only to exchange fresh nonces, then derives
-independent host-to-join and join-to-host AES-128-GCM sessions with
-`HKDF-SHA256(code, sender_nonce || receiver_nonce, "kigo-note-v1:...")`.
-Encrypted frames have independent sequence counters in each direction; replay,
-out-of-order, unsupported-version, oversized-text, and authentication failures
-are rejected.
+Inside the native CLI session:
 
-Current clients advertise the optional `workspace_sync` hello capability. After reconnecting, they exchange the
-selected pad in a fixed host-then-join order over the new encrypted session and deterministically keep the newer
-revision. The fixed order also prevents both native peers from blocking while writing large snapshots. Older
-clients ignore the capability and keep the original one-shot session behavior, so the protocol version remains 1.
+- Enter a line to publish the complete contents of the selected pad.
+- `/show` prints the local document.
+- `/clear` publishes an empty document.
+- `/quit` closes only the current client.
 
-Each update carries a pad, revision,
-timestamp, and full text. Concurrent updates converge using deterministic
-revision, timestamp, and text ordering. Negotiation and signaling tag rooms as
-`note`, so regular file/text Receive clients are rejected before the encrypted
-handshake. The current MVP limits one document to 1 MiB and does not synchronize multiple pads in one session.
+The public and loopback browser editors publish after a 250 ms debounce. Clear publishes an empty revision and
+Leave disconnects only that browser. The TUI uses the same debounce and supports `Ctrl+S` to publish immediately,
+`Ctrl+L` to clear, and Esc to leave.
 
-Native CLI, loopback web, TUI, and public browser clients keep encrypted drafts for seven days. A draft is scoped
-to the normalized pairing code, role (`host` or `join`), and pad; all three must match to restore it. Draft keys use
-`HKDF-SHA256(code, random_salt, "kigo-note-draft-v1")`, AES-128-GCM uses a fresh random nonce on every save, and
-the role and pad are authenticated as additional data. The storage index is a hash derived from the room token,
-role, and pad, so filenames/localStorage keys do not expose them.
+## Persistence And Conflicts
 
-Native drafts are separate `0600` atomic files under the platform config directory's `kigo/note-drafts/` folder.
-Set `KIGO_NOTE_DRAFT_PATH` to override that directory or pass `--no-note-drafts` to disable native persistence.
-The native cache retains at most 16 drafts. Browser drafts use origin-local storage and retain up to three entries
-as quota permits. Clear saves an empty revision; deleting the native draft directory or the browser site's local
-data removes the cache immediately. A random host code still needs to be retained by the user before that draft
-can be addressed again.
+Each update contains a pad, revision, timestamp, and complete text. The service assigns a monotonically increasing
+generation and accepts an update only when its base generation is current. A stale writer receives the newest
+snapshot, and clients deterministically reconcile documents by revision, timestamp, then text. This is a compact
+last-writer convergence model, not a character-level collaborative editor or CRDT.
+
+Snapshots expire after 30 days without an update by default. Every accepted update refreshes the deadline. Set the
+service options directly or through the matching environment variables:
+
+```sh
+kigo serve --note-store /var/lib/kigo/notes --note-ttl 720h
+
+KIGO_NOTE_STORE=/var/lib/kigo/notes
+KIGO_NOTE_TTL=720h
+```
+
+An empty `--note-store` keeps snapshots in server memory and therefore does not survive a restart. Production
+deployments should use a durable directory writable only by the Kigo service account. The service cleanup loop
+removes expired in-memory and on-disk snapshots. `/api/health` reports whether disk persistence is configured,
+the loaded document and client counts, and the configured TTL under `notepad`.
+
+The current protocol permits up to 16 simultaneous clients per document and limits one document to 1 MiB. It
+synchronizes one pad per connection and is separate from file manifests, transfer resume, and mux.
+
+## Encryption Model
+
+Clients serialize the document and encrypt it with AES-128-GCM. The key is derived with
+`HKDF-SHA256(normalized_code, random_salt, "kigo-note-store-v1")`; every snapshot uses a fresh 16-byte salt and
+12-byte nonce. The normalized pad is authenticated as additional data. Go and WebCrypto use the same record
+format.
+
+The service stores only record metadata, random salt, nonce, and ciphertext. Disk filenames are hashes of the
+hashed room/pad identity, and tests verify that the code, pad, and text do not appear in snapshot files. The
+service can still observe connection metadata, update times, ciphertext size, and stable hashed identifiers.
+Because a six-character code can be guessed offline from a stolen record, this protects routine server-side
+content exposure but is not a high-security password model. Use a longer custom code for more sensitive notes.
+
+## Local Draft Cache
+
+Native CLI, loopback web, TUI, and public browser clients also keep an encrypted local draft for fast recovery
+when a publish has not reached the service. Drafts expire after seven days and are scoped to the normalized code,
+role (`host` or `join`), and pad. Draft keys use
+`HKDF-SHA256(code, random_salt, "kigo-note-draft-v1")`; AES-128-GCM uses a new nonce for every save and
+authenticates the role and pad.
+
+Native drafts are `0600` atomic files in the platform config directory's `kigo/note-drafts/` folder. Set
+`KIGO_NOTE_DRAFT_PATH` to override it or pass `--no-note-drafts` to disable the cache. Native retains at most 16
+drafts; browsers retain up to three entries in origin-local storage as quota permits. Deleting local drafts does
+not delete the service snapshot: opening the same code and pad downloads it again until its service TTL expires.

@@ -58,14 +58,12 @@ func tuiNoteStatus(
 		return "syncing", tuiAccentStyle
 	}
 	switch state.Status {
-	case "waiting":
-		return "waiting for peer", tuiAccentStyle
-	case "connecting":
-		return "connecting", tuiAccentStyle
+	case "opening":
+		return "opening", tuiAccentStyle
 	case "reconnecting":
 		return "reconnecting", tuiWarningStyle
-	case "connected":
-		return "connected", tuiSuccessStyle
+	case "available":
+		return "available", tuiSuccessStyle
 	case "syncing":
 		return "syncing", tuiAccentStyle
 	case "synced":

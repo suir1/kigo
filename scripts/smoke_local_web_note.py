@@ -126,6 +126,12 @@ def local_host_to_native(binary, service_url, local_url, token):
         raise RuntimeError("local host returned invalid code: " + repr(code))
     if started.get("pad") != pad or "p=Local+Host+Notes" not in started.get("link", ""):
         raise RuntimeError("local host returned invalid pad/link: " + repr(started))
+    wait_note(
+        local_url,
+        token,
+        lambda state: state.get("connected") and state.get("pad") == pad,
+        "local host single-user availability",
+    )
     native = NativeNote(
         native_args(binary, service_url, "note", "--pad", pad, "join", code)
     )
@@ -162,6 +168,7 @@ def local_host_to_native(binary, service_url, local_url, token):
         api(local_url, token, "/api/note/update", {"text": persisted_text})
         wait_for("native receiving persisted draft", lambda: persisted_text in native.output())
         api(local_url, token, "/api/note/leave", {})
+        native.write("/quit\n")
         native.wait()
         restored = api(
             local_url,
@@ -222,6 +229,7 @@ def native_host_to_local(binary, service_url, local_url, token):
             lambda: "local join document" in native.output(),
         )
         api(local_url, token, "/api/note/leave", {})
+        native.write("/quit\n")
         native.wait()
     finally:
         native.close()

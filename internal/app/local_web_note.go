@@ -13,7 +13,6 @@ import (
 	"github.com/suir1/kigo/internal/note"
 	"github.com/suir1/kigo/internal/secure"
 	"github.com/suir1/kigo/internal/transport"
-	"github.com/suir1/kigo/internal/transport/webrtcx"
 )
 
 const (
@@ -47,7 +46,7 @@ type localWebNotePeer interface {
 	Close() error
 }
 
-type localWebNoteConnectFunc func(context.Context, string, bool) (localWebNotePeer, error)
+type localWebNoteConnectFunc func(context.Context, string, bool, string) (localWebNotePeer, error)
 
 type localWebNoteConnection struct {
 	connect      localWebNoteConnectFunc
@@ -136,50 +135,17 @@ func localWebNoteReconnectConfig(g *globalOptions) (int, time.Duration, error) {
 }
 
 func localWebNoteConnector(g *globalOptions, code string, host bool) localWebNoteConnection {
-	role := "receiver"
-	if host {
-		role = "sender"
-	}
-	pairing := newPairingWindow(g)
-	reconnect := &webrtcx.ReconnectState{}
-	var (
-		resolveOnce sync.Once
-		options     *globalOptions
-		resolveErr  error
-	)
-	dial := pairing.dialer(func(pairCtx context.Context) (transport.Transport, error) {
-		return dialTransport(pairCtx, options, secure.RoomToken(code), role, reconnect)
-	})
-	connect := func(ctx context.Context, _ string, _ bool) (localWebNotePeer, error) {
-		resolveOnce.Do(func() {
-			options, resolveErr = withPairingWindow(ctx, pairing, func(pairCtx context.Context) (*globalOptions, error) {
-				return resolveNoteOptions(pairCtx, g, secure.RoomToken(code), role)
-			})
+	connect := func(ctx context.Context, code string, _ bool, pad string) (localWebNotePeer, error) {
+		return note.OpenPersistentSession(ctx, note.PersistentOptions{
+			ServiceBase: g.Signal,
+			Code:        code,
+			Pad:         pad,
+			Dialer:      outboundWebSocketDialer(g),
 		})
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-		connection, err := dial(ctx)
-		if err != nil {
-			return nil, err
-		}
-		var session *note.Session
-		if host {
-			session, err = note.NewHost(ctx, connection, code)
-		} else {
-			session, err = note.NewJoin(ctx, connection, code)
-		}
-		if err != nil {
-			_ = connection.Close()
-			return nil, err
-		}
-		return session, nil
 	}
 	return localWebNoteConnection{
-		connect: connect,
-		retryAllowed: func() bool {
-			return options != nil && webRTCReconnectAllowed(options, reconnect)
-		},
+		connect:      connect,
+		retryAllowed: func() bool { return true },
 	}
 }
 
@@ -260,10 +226,7 @@ func (s *localWebNoteStore) start(code string, host bool, pad string) (localWebN
 	s.sequence++
 	id := s.sequence
 	ctx, cancel := context.WithCancel(s.parent)
-	status := "connecting"
-	if host {
-		status = "waiting"
-	}
+	status := "opening"
 	link := ""
 	if host && s.linkForCode != nil {
 		link = s.linkForCode(code, pad)
@@ -310,7 +273,7 @@ func (s *localWebNoteStore) run(
 	connection localWebNoteConnection,
 ) {
 	for attempt := 1; attempt <= s.reconnectAttempts; attempt++ {
-		session, err := connection.connect(ctx, code, host)
+		session, err := connection.connect(ctx, code, host, pad)
 		if err == nil {
 			if syncer, ok := session.(localWebNoteWorkspaceSyncer); ok {
 				_, err = syncer.SyncWorkspace(ctx, workspace, pad)
@@ -385,7 +348,7 @@ func (s *localWebNoteStore) setConnected(id uint64, session localWebNotePeer) bo
 	document := s.workspace.Snapshot(s.state.Pad)
 	s.state.Connected = true
 	s.state.Synced = true
-	s.state.Status = "connected"
+	s.state.Status = "available"
 	s.state.Text = document.Text
 	s.state.Revision = document.Revision
 	s.state.AckedRevision = document.Revision

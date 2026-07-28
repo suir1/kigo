@@ -99,9 +99,9 @@ func (m tuiModel) renderForm(width int) string {
 			m.renderButton(2, "Run network doctor"),
 		)
 	case tuiModeNote:
-		role := "host new code"
+		role := "create new code"
 		if !m.noteHost {
-			role = "join code"
+			role = "open code"
 		}
 		lines = append(lines, m.renderChoice(1, "Role", role, width))
 		if m.noteHost {
@@ -109,14 +109,14 @@ func (m tuiModel) renderForm(width int) string {
 				m.renderField(2, "Code", m.noteCode, "random", width),
 				m.renderField(3, "Pad", m.notePad, note.DefaultPad, width),
 				"",
-				m.renderButton(4, "Host notepad"),
+				m.renderButton(4, "Create notepad"),
 			)
 		} else {
 			lines = append(lines,
 				m.renderField(2, "Code", m.noteCode, "K7M9Q2", width),
 				m.renderField(3, "Pad", m.notePad, note.DefaultPad, width),
 				"",
-				m.renderButton(4, "Join notepad"),
+				m.renderButton(4, "Open notepad"),
 			)
 		}
 	}

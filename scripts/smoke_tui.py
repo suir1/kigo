@@ -269,7 +269,7 @@ def test_notepad(binary: Path, service_url: str) -> None:
         if match is None:
             fail("TUI notepad did not render a pairing code", output)
         code = match.group(1)
-        require_text(output, "Shared notepad", "waiting for peer", "Public link", "Pad:", pad)
+        require_text(output, "Shared notepad", "opening", "Public link", "Pad:", pad)
 
         native = CapturedNative(
             [
@@ -285,7 +285,8 @@ def test_notepad(binary: Path, service_url: str) -> None:
                 code,
             ]
         )
-        output += wait_for(master, "connected", 15.0)
+        if "available" not in strip_ansi(output):
+            output += wait_for(master, "available", 15.0)
         require_text(output, "Ctrl+S sync now", "Ctrl+L clear")
         native.wait_for(f"Connected. Pad: {pad}", 15.0)
 
@@ -299,6 +300,7 @@ def test_notepad(binary: Path, service_url: str) -> None:
         native.wait_for("(empty)", 15.0)
 
         os.write(master, b"\x1b")
+        native.write("/quit\n")
         native.wait(15.0)
         output += wait_for(master, "closed", 5.0)
         require_text(output, "Enter/Esc return")

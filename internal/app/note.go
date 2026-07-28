@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/suir1/kigo/internal/note"
 	"github.com/suir1/kigo/internal/secure"
-	"github.com/suir1/kigo/internal/transport"
-	"github.com/suir1/kigo/internal/transport/webrtcx"
 )
 
 func newNoteCommand(g *globalOptions) *cobra.Command {
@@ -22,7 +21,7 @@ func newNoteCommand(g *globalOptions) *cobra.Command {
 	noteCommand.PersistentFlags().StringVar(&pad, "pad", note.DefaultPad, "notepad name")
 	host := &cobra.Command{
 		Use:   "host",
-		Short: "Host a shared notepad",
+		Short: "Create or open a persistent shared notepad",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pad = note.NormalizePad(pad)
@@ -34,16 +33,16 @@ func newNoteCommand(g *globalOptions) *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Code:", code)
-			fmt.Fprintf(cmd.OutOrStdout(), "Join: kigo note join %s\n", code)
+			fmt.Fprintf(cmd.OutOrStdout(), "Open: kigo note join %s\n", code)
 			printNoteShareTarget(cmd.OutOrStdout(), g, code, pad)
 			printQRCodeIfTerminal(cmd.OutOrStdout(), noteQRCodeTarget(g, code, pad), !noQRCode)
-			fmt.Fprintln(cmd.OutOrStdout(), "Waiting for peer...")
+			fmt.Fprintln(cmd.OutOrStdout(), "Opening persistent notepad...")
 			return runNoteCommand(cmd.Context(), g, code, true, pad, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
 	join := &cobra.Command{
 		Use:   "join <code>",
-		Short: "Join a shared notepad",
+		Short: "Open a persistent shared notepad",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pad = note.NormalizePad(pad)
@@ -54,7 +53,7 @@ func newNoteCommand(g *globalOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Joining room:", code)
+			fmt.Fprintln(cmd.OutOrStdout(), "Opening notepad:", code)
 			return runNoteCommand(cmd.Context(), g, code, false, pad, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
@@ -80,18 +79,6 @@ func runNoteCommand(
 	out io.Writer,
 ) error {
 	ctx := withInterrupt(parent)
-	role := "receiver"
-	if host {
-		role = "sender"
-	}
-	pairing := newPairingWindow(g)
-	routeOptions, err := withPairingWindow(ctx, pairing, func(pairCtx context.Context) (*globalOptions, error) {
-		return resolveNoteOptions(pairCtx, g, secure.RoomToken(code), role)
-	})
-	if err != nil {
-		return err
-	}
-	reconnect := &webrtcx.ReconnectState{}
 	workspace := note.NewWorkspace()
 	var drafts *note.DraftStore
 	if !g.NoNoteDrafts {
@@ -114,26 +101,19 @@ func runNoteCommand(
 		}
 	}
 	input := note.NewInteractiveInput(in)
-	return runTransferWithReconnectGate(
-		ctx,
-		routeOptions,
-		func() bool { return webRTCReconnectAllowed(routeOptions, reconnect) },
-		pairing.dialer(func(ctx context.Context) (transport.Transport, error) {
-			return dialTransport(ctx, routeOptions, secure.RoomToken(code), role, reconnect)
-		}),
-		func(ctx context.Context, t transport.Transport) error {
-			var session *note.Session
-			var err error
-			if host {
-				session, err = note.NewHost(ctx, t, code)
-			} else {
-				session, err = note.NewJoin(ctx, t, code)
-			}
-			if err != nil {
-				return err
-			}
-			defer session.Close()
-			return note.RunInteractive(ctx, session, note.InteractiveOptions{
+	maxAttempts, err := totalReconnectAttempts(g, true)
+	if err != nil {
+		return err
+	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		session, openErr := note.OpenPersistentSession(ctx, note.PersistentOptions{
+			ServiceBase: g.Signal,
+			Code:        code,
+			Pad:         pad,
+			Dialer:      outboundWebSocketDialer(g),
+		})
+		if openErr == nil {
+			openErr = note.RunInteractive(ctx, session, note.InteractiveOptions{
 				Pad:           pad,
 				Out:           out,
 				Workspace:     workspace,
@@ -141,6 +121,25 @@ func runNoteCommand(
 				SyncWorkspace: true,
 				OnChange:      persistDraft,
 			})
-		},
-	)
+			_ = session.Close()
+		}
+		if openErr == nil {
+			return nil
+		}
+		if attempt >= maxAttempts || !isRetryableTransferError(openErr) {
+			return openErr
+		}
+		fmt.Fprintf(out, "Notepad connection interrupted: %v\n", openErr)
+		fmt.Fprintf(out, "Reconnecting attempt %d/%d in %s\n", attempt+1, maxAttempts, g.ReconnectDelay)
+		timer := time.NewTimer(g.ReconnectDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
 }

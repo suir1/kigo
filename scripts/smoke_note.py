@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end relay smoke test for the native shared notepad."""
+"""End-to-end persistence smoke test for the native shared notepad."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def wait_for_port(port: int, timeout: float = 5.0) -> None:
                 return
         except OSError:
             time.sleep(0.05)
-    raise RuntimeError(f"relay did not listen on 127.0.0.1:{port}")
+    raise RuntimeError(f"service did not listen on 127.0.0.1:{port}")
 
 
 def build_binary(work: Path) -> Path:
@@ -121,86 +121,88 @@ def main() -> None:
     work = Path(tempfile.mkdtemp(prefix="kigo-note-smoke-"))
     os.environ["KIGO_NOTE_DRAFT_PATH"] = str(work / "note-drafts")
     os.environ["KIGO_CONFIG_PATH"] = str(work / "config.json")
-    relay: subprocess.Popen[str] | None = None
+    service: subprocess.Popen[str] | None = None
     host: subprocess.Popen[str] | None = None
     join: subprocess.Popen[str] | None = None
     try:
         binary = build_binary(work)
         port = find_free_port()
-        relay_addr = f"127.0.0.1:{port}"
-        relay = subprocess.Popen(
-            [str(binary), "relay", "--listen", relay_addr, "--no-lan-announce"],
-            cwd=ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        listen = f"127.0.0.1:{port}"
+        base_url = f"http://{listen}"
+        service, service_output = spawn(
+            binary,
+            [
+                "serve",
+                "--listen",
+                listen,
+                "--public-url",
+                base_url,
+                "--note-store",
+                str(work / "persistent-notes"),
+            ],
         )
         wait_for_port(port)
         common = [
-            "--transport",
-            "native",
-            "--relay",
-            relay_addr,
-            "--no-direct",
-            "--connections",
-            "1",
+            "--signal",
+            base_url,
+            "--web-url",
+            base_url,
             "--route-history",
             str(work / "route-history.json"),
         ]
 
         code = "NATIVE-NOTE-DRAFT-2026"
         host, host_output = spawn(binary, [*common, "note", "host", "--code", code])
-        host_text = host_output.wait_for("Waiting for peer...")
+        host_text = host_output.wait_for("Opening persistent notepad...")
         if not re.search(rf"^Code: {code}$", host_text, re.MULTILINE):
             fail("host did not print a pairing code", host_output)
-
-        join, join_output = spawn(binary, [*common, "note", "join", code])
-        join_output.wait_for("Connected. Pad: main")
         host_output.wait_for("Connected. Pad: main")
 
         send_line(host, "hello from host")
-        join_output.wait_for("Remote revision 1:\nhello from host")
         host_output.wait_for("Synced revision 1")
-
-        send_line(join, "reply from join")
-        host_output.wait_for("Remote revision 2:\nreply from join")
-        join_output.wait_for("Synced revision 2")
-
         send_line(host, "/quit")
-        join_output.wait_for("Peer closed the notepad.")
         host.wait(timeout=5)
-        join.wait(timeout=5)
-        if host.returncode != 0 or join.returncode != 0:
-            fail(
-                f"host returncode={host.returncode} join returncode={join.returncode}",
-                host_output,
-                join_output,
-            )
+        if host.returncode != 0:
+            fail(f"host returncode={host.returncode}", host_output)
 
-        host, host_output = spawn(binary, [*common, "note", "host", "--code", code])
-        host_output.wait_for("Waiting for peer...")
         join, join_output = spawn(binary, [*common, "note", "join", code])
-        host_output.wait_for("Recovered encrypted draft revision 2.")
-        join_output.wait_for("Recovered encrypted draft revision 2.")
-        host_output.wait_for("Connected. Pad: main")
+        join_output.wait_for("Recovered revision 1:\nhello from host")
         join_output.wait_for("Connected. Pad: main")
+        send_line(join, "reply from join")
+        join_output.wait_for("Synced revision 2")
+        send_line(join, "/quit")
+        join.wait(timeout=5)
+        if join.returncode != 0:
+            fail(f"join returncode={join.returncode}", join_output)
+
+        stop(service)
+        service, service_output = spawn(
+            binary,
+            [
+                "serve",
+                "--listen",
+                listen,
+                "--public-url",
+                base_url,
+                "--note-store",
+                str(work / "persistent-notes"),
+            ],
+        )
+        wait_for_port(port)
+        host, host_output = spawn(binary, [*common, "note", "host", "--code", code])
+        host_output.wait_for("Recovered revision 2:\nreply from join")
+        host_output.wait_for("Connected. Pad: main")
         send_line(host, "/show")
         host_output.wait_for("Local revision 2:\nreply from join")
         send_line(host, "/quit")
-        join_output.wait_for("Peer closed the notepad.")
         host.wait(timeout=5)
-        join.wait(timeout=5)
-        if host.returncode != 0 or join.returncode != 0:
-            fail(
-                f"restored host returncode={host.returncode} join returncode={join.returncode}",
-                host_output,
-                join_output,
-            )
-        print("all shared notepad smoke checks passed")
+        if host.returncode != 0:
+            fail(f"restored host returncode={host.returncode}", host_output)
+        print("all persistent notepad smoke checks passed")
     finally:
         stop(join)
         stop(host)
-        stop(relay)
+        stop(service)
         shutil.rmtree(work, ignore_errors=True)
 
 

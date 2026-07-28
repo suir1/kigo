@@ -19,7 +19,7 @@ func TestLocalWebNoteStoreHostUpdateRemoteClearAndLeave(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{WebURL: "https://kigo.example"},
-		func(context.Context, string, bool) (localWebNotePeer, error) {
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
 			return peer, nil
 		},
 	)
@@ -31,11 +31,11 @@ func TestLocalWebNoteStoreHostUpdateRemoteClearAndLeave(t *testing.T) {
 	}
 	if !started.Running || !started.Host || started.Code != "K7M9Q2" ||
 		started.Link != "https://kigo.example/#n=K7M9Q2" ||
-		started.Status != "waiting" {
+		started.Status != "opening" {
 		t.Fatalf("started state = %#v", started)
 	}
 	waitForLocalWebNote(t, store, func(state localWebNoteSnapshot) bool {
-		return state.Connected && state.Status == "connected"
+		return state.Connected && state.Status == "available"
 	})
 
 	state, err := store.Update("local document")
@@ -107,7 +107,7 @@ func TestLocalWebNoteStoreHostsCustomCode(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{WebURL: "https://kigo.example"},
-		func(context.Context, string, bool) (localWebNotePeer, error) { return peer, nil },
+		func(context.Context, string, bool, string) (localWebNotePeer, error) { return peer, nil },
 	)
 	started, err := store.StartHostWithCodeAndPad(" project-Alpha-2026 ", "release notes")
 	if err != nil {
@@ -133,7 +133,7 @@ func TestLocalWebNoteStoreAppliesPeerLeave(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{},
-		func(context.Context, string, bool) (localWebNotePeer, error) {
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
 			return peer, nil
 		},
 	)
@@ -165,7 +165,7 @@ func TestLocalWebNoteStoreReconnectsAndRetainsWorkspace(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{ReconnectAttempts: 2, ReconnectDelay: 20 * time.Millisecond},
-		func(context.Context, string, bool) (localWebNotePeer, error) {
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
 			connectMu.Lock()
 			defer connectMu.Unlock()
 			if connectCount >= len(peers) {
@@ -195,7 +195,7 @@ func TestLocalWebNoteStoreReconnectsAndRetainsWorkspace(t *testing.T) {
 		return state.Running && !state.Connected && state.Status == "reconnecting"
 	})
 	state := waitForLocalWebNote(t, store, func(state localWebNoteSnapshot) bool {
-		return state.Connected && state.Status == "connected"
+		return state.Connected && state.Status == "available"
 	})
 	if state.Text != "draft before disconnect" || state.Revision != 1 || !state.Synced {
 		t.Fatalf("reconnected state = %#v", state)
@@ -217,7 +217,7 @@ func TestLocalWebNoteStoreRestoresEncryptedDraft(t *testing.T) {
 	first := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{},
-		func(context.Context, string, bool) (localWebNotePeer, error) { return firstPeer, nil },
+		func(context.Context, string, bool, string) (localWebNotePeer, error) { return firstPeer, nil },
 	)
 	first.drafts = note.NewDraftStore(draftPath)
 	if _, err := first.StartHostWithCodeAndPad("PROJECT-ALPHA-2026", "Sprint Notes"); err != nil {
@@ -235,7 +235,7 @@ func TestLocalWebNoteStoreRestoresEncryptedDraft(t *testing.T) {
 	second := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{},
-		func(context.Context, string, bool) (localWebNotePeer, error) { return secondPeer, nil },
+		func(context.Context, string, bool, string) (localWebNotePeer, error) { return secondPeer, nil },
 	)
 	second.drafts = note.NewDraftStore(draftPath)
 	started, err := second.StartHostWithCodeAndPad("PROJECT-ALPHA-2026", "Sprint Notes")
@@ -253,7 +253,7 @@ func TestLocalWebNoteAPIAuthValidationAndHostLink(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{WebURL: "https://kigo.example"},
-		func(context.Context, string, bool) (localWebNotePeer, error) {
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
 			return peer, nil
 		},
 	)
@@ -335,7 +335,7 @@ func TestLocalWebRejectsNativeTaskAndNotepadOverlap(t *testing.T) {
 	store := newLocalWebNoteStoreWithConnector(
 		context.Background(),
 		&globalOptions{},
-		func(context.Context, string, bool) (localWebNotePeer, error) {
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
 			return peer, nil
 		},
 	)

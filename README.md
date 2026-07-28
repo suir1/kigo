@@ -1,6 +1,6 @@
 # kigo
 
-`kigo` is a Go prototype for native/web file, text, and shared-notepad transfer. It uses a public web/signaling service for pairing, WebRTC DataChannels for browser-compatible transport, and an application-layer AES-128-GCM session derived from the pairing code.
+`kigo` is a Go prototype for native/web file, text, and shared-notepad transfer. It uses a public web/signaling service for pairing, WebRTC DataChannels for browser-compatible transfer, and a persistent encrypted service for asynchronous notepads.
 
 ## Install
 
@@ -39,7 +39,7 @@ Implemented in this version:
 - Signaling can issue room-bound, expiring native relay credentials so installed clients never receive the relay's long-term secret
 - `kigo web` loopback-only browser console for native send, receive, filesystem path selection, doctor, shared notepad, live logs, share links, and cancel
 - `kigo tui` interactive terminal console for native send, receive, doctor, shared notepad, live logs, share links, and cancel
-- `GET /api/health` runtime health endpoint with version, room stats, and non-secret TURN status
+- `GET /api/health` runtime health endpoint with version, transfer-room, persistent-notepad, and non-secret TURN status
 - Production HTTP server limits request-header time, response-write time, idle connections, and header size
 - Direct TLS enforces TLS 1.2 or newer; `serve --check-config` validates URLs and certificate/key pairs before listening
 - Web responses include CSP, clickjacking, MIME-sniffing, referrer, permissions, cross-origin, and HTTPS HSTS headers
@@ -51,7 +51,7 @@ Implemented in this version:
 - Built-in TURN enforces configurable global, per-credential, and per-source-IP active allocation quotas
 - Built-in TURN counts socket-level UDP egress and enforces token-bucket byte quotas globally, per credential, and per source IP
 - Signaling rooms have a TTL and expired rooms notify connected clients before closing
-- Native and browser clients stop waiting for an unpaired peer after five minutes by default; `--pair-timeout` tunes native clients without limiting connected session duration
+- Native and browser file/text clients stop waiting for an unpaired peer after five minutes by default; persistent notepads are available with one client
 - Signaling rooms lock after a sender and receiver are paired, preventing late joins from reusing pending signals
 - Signaling WebSockets enforce message size limits, read deadlines, and ping/pong heartbeats
 - Signaling clients can replay the full pending ICE/offer backlog without blocking room joins
@@ -60,7 +60,7 @@ Implemented in this version:
 - `kigo send <path> --symlinks follow|preserve [--no-gitignore]` native file or directory send over WebRTC/relay
 - `kigo recv <code> --out <dir> --on-conflict overwrite|skip|rename` native receive
 - `kigo text send [text]` and `kigo text recv <code>`
-- `kigo note host`, `kigo note join <code>`, and the browser/local-web/TUI Notepad views for a live bidirectional encrypted notepad
+- `kigo note host`, `kigo note join <code>`, and browser/local-web/TUI views for an asynchronous encrypted notepad that survives disconnected clients and service restarts
 - TTY senders print a terminal QR code for the browser share link or native pairing code; `--no-qrcode` disables it
 - Senders generate a six-character code by default or accept a shared custom alphanumeric/mnemonic code through CLI, browser, local web, and TUI
 - Native CLI, browser, local web, and TUI receive paths normalize and validate pairing codes before joining
@@ -105,8 +105,8 @@ Implemented in this version:
 - Web UI can cancel an in-flight transfer and restores controls after cancellation
 - Web UI maps common room, signaling, timeout, and connection-close failures to clearer retry guidance
 - Web pairing links with `#c=<code>` auto-start receiving
-- Web notepad links with `#n=<code>` auto-join `main`; `#n=<code>&p=<pad>` selects a custom pad
-- Native CLI, browser, local web, and TUI notepads automatically retry interrupted sessions and reconcile the in-memory pad after reconnect
+- Web notepad links with `#n=<code>` auto-open `main`; `#n=<code>&p=<pad>` selects a custom pad
+- Native CLI, browser, local web, and TUI notepads edit immediately, broadcast to connected clients, and restore the latest encrypted service snapshot when opened later
 - Notepad drafts are encrypted locally with a code-derived AES-128-GCM key, expire after seven days, and restore only for the same code, role, and pad
 - Web UI supports selecting multiple files; Chromium-style folder picking is available when the browser supports `webkitdirectory`
 - Web receivers get a `Download all as ZIP` link for multi-file or directory transfers; ZIPs preserve empty directories, Unix modes, timestamps, and symlink entries
@@ -191,7 +191,7 @@ without changing the value. The TUI and CLI call the same in-process client task
 fallback, WebRTC, encryption, resume, mux, and route history remain shared without rebuilding command-line
 arguments or parsing child-process output.
 
-The Notepad mode can host a new code or join an existing one and select one pad for that session. Once connected it provides a multiline editor,
+The Notepad mode can create or open a code and select one pad. As soon as the persistent service is connected it provides a multiline editor,
 publishes changes after 250 ms, and accepts `Ctrl+S` to sync immediately, `Ctrl+L` to clear, and Esc to leave.
 It uses the same in-process note controller as the loopback web console rather than launching an interactive
 child process.
@@ -274,15 +274,14 @@ kigo note host
 kigo note join <code>
 ```
 
-The notepad is a live session rather than a one-shot text transfer.
+The notepad is a persistent shared document rather than a one-shot text transfer or two-peer rendezvous.
 Enter lines to publish the selected pad; `/show`, `/clear`, and `/quit` control
 a native session. The default pad is `main`; `--pad <name>` selects another.
-Native CLI, browser, loopback web, and TUI peers all support one selected pad per session. A browser can open
-the printed `#n=<code>` or `#n=<code>&p=<pad>` link, or use the Notepad tab to host/join, edit the shared
-document, clear it, and leave. Interrupted sessions retry up to three total attempts by default and exchange the
-current pad over the new encrypted session. Encrypted local drafts persist across process or browser-page closure
-for seven days and restore only with the
-same code, host/join role, and pad. See `docs/note.md` for storage details, protocol behavior, and size limits.
+Native CLI, browser, loopback web, and TUI clients all support one selected pad per connection. A browser can open
+the printed `#n=<code>` or `#n=<code>&p=<pad>` link, or use the Notepad tab to create/open, edit, clear, and
+leave. No second client is required. The public service broadcasts concurrent updates and retains an AES-GCM
+encrypted snapshot for 30 days after the latest update by default. Encrypted local drafts persist for seven days.
+See `docs/note.md` for storage, conflict, security, and size-limit details.
 
 Transport selection defaults to `--transport auto`:
 
@@ -298,10 +297,10 @@ kigo --avoid-vpn send ./file
 kigo --pair-timeout 90s send ./file
 ```
 
-Send, receive, and notepad sessions wait up to five minutes for the peer by default. `--pair-timeout` accepts a
+Send and receive sessions wait up to five minutes for the peer by default. `--pair-timeout` accepts a
 Go duration such as `90s` or `10m`. The deadline covers route negotiation and waiting for the initial transport;
-after the peer connects, it is removed and does not limit transfer or notepad session duration. Automatic
-reconnect rendezvous also uses the configured bound.
+after the peer connects, it is removed and does not limit transfer duration. Notepads use their persistent
+WebSocket service instead of this pairing window.
 
 In auto mode, each peer advertises whether it is native or web plus any configured native relay/LAN capability.
 Two direct-capable native peers first exchange TCP candidates through signaling. A common client relay or the
@@ -476,8 +475,8 @@ Service health:
 curl http://127.0.0.1:9100/api/health
 ```
 
-The health endpoint reports version metadata, uptime, active room counts, public URL, server capability names
-including `direct-rendezvous-v1`, the advertised native relay endpoint, TURN credential mode,
+The health endpoint reports version metadata, uptime, active transfer rooms, persistent-notepad document/client
+counts and TTL, public URL, server capability names including `direct-rendezvous-v1`, the advertised native relay endpoint, TURN credential mode,
 active allocation counts, configured quota ceilings, cumulative built-in TURN egress, dropped bytes, and quota
 rejections. It does not include TURN credentials or shared secrets.
 
@@ -568,9 +567,11 @@ storage. Browsers without OPFS can reconnect in the same tab but request offset 
 
 Browser notepad drafts are separate from OPFS transfer data. They are encrypted with a code-derived AES-128-GCM
 key before entering origin-local storage, retain at most three recent entries as quota permits, and expire after
-seven days. The pairing code, role, and pad must match to decrypt a draft.
+seven days. The pairing code, role, and pad must match to decrypt a draft. These local drafts complement the public
+service's encrypted snapshot: clearing browser storage does not remove the shared document, which remains
+recoverable until the service's default 30-day sliding TTL expires.
 
-The smoke script builds a temporary `kigo` binary, starts a local service plus optional built-in TURN on an available localhost port, and drives a Playwright browser. It covers browser-side streaming SHA-256 plus transfer/notepad protocol guards, gzip transfers in both native/web directions, native-to-web file and text receive, same-code browser refresh plus OPFS resume without restarting the native sender, wrong reconnect-token rejection, web-to-native file, text, and conflict-skip sends, web-to-web file and text transfer, direct-ICE failure with synchronized TURN fallback, native/web and web/web shared notepad editing, forced WebRTC interruption, encrypted browser-draft page recovery, notepad deep links and protocol mismatch rejection, web cancellation/error handling, web-to-native resume from an existing `.kigopart`, native directory-to-web ZIP download with `.gitignore`, empty-directory, and symlink metadata checks, and Chromium folder upload to native.
+The smoke script builds a temporary `kigo` binary, starts a local service plus optional built-in TURN on an available localhost port, and drives a Playwright browser. It covers browser-side streaming SHA-256 plus transfer/notepad protocol guards, gzip transfers in both native/web directions, native-to-web file and text receive, same-code browser refresh plus OPFS resume without restarting the native sender, wrong reconnect-token rejection, web-to-native file, text, and conflict-skip sends, web-to-web file and text transfer, direct-ICE failure with synchronized TURN fallback, asynchronous native/browser and web/web notepad editing and recovery, encrypted browser-draft page recovery, notepad deep links and protocol mismatch rejection, web cancellation/error handling, web-to-native resume from an existing `.kigopart`, native directory-to-web ZIP download with `.gitignore`, empty-directory, and symlink metadata checks, and Chromium folder upload to native.
 
 Set `PLAYWRIGHT_BROWSER=chromium|firefox|webkit` and optionally `KIGO_SMOKE_FILTER` with one or more comma-separated labels. Chromium uses the installed Chrome channel by default; set `PLAYWRIGHT_CHANNEL=` (or legacy `PLAYWRIGHT_CHROMIUM_CHANNEL=`) to use its bundled runtime. `KIGO_SMOKE_TURN_ENABLED=0` disables the local TURN server, while `KIGO_TURN_LISTEN` and `KIGO_TURN_PUBLIC_IP` override its test endpoint. `KIGO_SMOKE_NATIVE_INTERFACE` binds native peers to one interface. `KIGO_SMOKE_BROWSER_ARGS` accepts comma-separated Chromium launch arguments for ICE diagnostics.
 
@@ -679,9 +680,9 @@ Interface-bound doctor, relay, and WebRTC smoke:
 
 The local web smoke script starts signaling plus the tokenized loopback console, validates API authorization, filesystem browsing, and
 asset JavaScript, runs Doctor through the in-process task module, starts a send, verifies its public link, and
-cancels it. It also exercises custom-pad local-Web/native notepad hosting and joining, encrypted draft recovery, bidirectional updates, clear, ACK,
-and leave over real WebRTC connections. The TUI smoke uses a Unix PTY to verify the menu, Doctor task, sender
-pairing code/link, path browser, and a real custom-pad TUI/native shared-notepad session with bidirectional edits, clear,
+cancels it. It also exercises custom-pad local-Web/native persistent-notepad creation/opening, encrypted draft and service recovery, broadcast updates, clear, ACK,
+and leave. The TUI smoke uses a Unix PTY to verify the menu, Doctor task, sender
+pairing code/link, path browser, and a custom-pad persistent notepad with bidirectional edits, clear,
 and leave. The relay smoke script builds a temporary `kigo`, starts a password-protected relay on
 `127.0.0.1:19090`, and verifies signaling-only direct TCP, direct-to-relay fallback with temporary credentials,
 NAT-aware direct timeout exchange and authenticated UDP assistance, direct-to-WebRTC fallback without a relay, four-connection single-file chunk
@@ -825,6 +826,8 @@ KIGO_NATIVE_RELAY=relay.example.com:9000
 KIGO_NATIVE_RELAY_SECRET=<shared-native-relay-secret>
 KIGO_NATIVE_RELAY_CREDENTIAL_TTL=2h
 KIGO_SIGNAL_REQUESTS_PER_MINUTE=60
+KIGO_NOTE_STORE=/var/lib/kigo/notes
+KIGO_NOTE_TTL=720h
 KIGO_TLS_CERT=/etc/kigo/cert.pem
 KIGO_TLS_KEY=/etc/kigo/key.pem
 KIGO_TURN_LISTEN=0.0.0.0:3478
@@ -847,8 +850,8 @@ KIGO_TRUSTED_PROXIES=127.0.0.1/32
 kigo serve
 ```
 
-`kigo serve` also accepts `KIGO_WEB_DIR`, `KIGO_NATIVE_RELAY`, `KIGO_NATIVE_RELAY_SECRET`,
-`KIGO_NATIVE_RELAY_CREDENTIAL_TTL`, and `KIGO_TURN` for an externally managed TURN URL. Static TURN
+`kigo serve` also accepts `KIGO_WEB_DIR`, `KIGO_NOTE_STORE`, `KIGO_NOTE_TTL`, `KIGO_NATIVE_RELAY`,
+`KIGO_NATIVE_RELAY_SECRET`, `KIGO_NATIVE_RELAY_CREDENTIAL_TTL`, and `KIGO_TURN` for an externally managed TURN URL. Static TURN
 deployments may continue using `KIGO_TURN_PASS`. `kigo relay` accepts `KIGO_RELAY_LISTEN`,
 `KIGO_RELAY_ROOM_TTL`, `KIGO_RELAY_PASS`, and `KIGO_RELAY_TOKEN_SECRET`; native relay clients also use
 `KIGO_RELAY_PASS` when `--relay-pass` is omitted.
