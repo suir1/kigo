@@ -15,6 +15,16 @@ $archive = "$archiveRoot.zip"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $release $archiveRoot) | Out-Null
 try {
+    function Invoke-RestMethod {
+        param([string]$Uri, [hashtable]$Headers)
+        if ($Uri -match '/releases/latest$') { throw "no stable release" }
+        if ($Uri -match '/releases\?per_page=100$') { return @([pscustomobject]@{ tag_name = "v1.2.3-alpha.2" }) }
+        throw "unexpected release API request: $Uri"
+    }
+    $resolved = & "$PSScriptRoot/install.ps1" -Repo "example/kigo" -InstallDir $installDir -DryRun
+    if ($resolved -notcontains "version=v1.2.3-alpha.2") { throw "prerelease fallback failed: $resolved" }
+    Remove-Item function:Invoke-RestMethod
+
     Copy-Item $binary (Join-Path $release "$archiveRoot/kigo.exe")
     Compress-Archive -Path (Join-Path $release $archiveRoot) -DestinationPath (Join-Path $release $archive)
     Remove-Item -Recurse -Force (Join-Path $release $archiveRoot)

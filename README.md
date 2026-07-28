@@ -19,7 +19,8 @@ Invoke-WebRequest https://raw.githubusercontent.com/suir1/kigo/main/scripts/inst
 Remove-Item $installer
 ```
 
-The installers select the matching release archive, verify it against the release `SHA256SUMS`, run the
+The installers select the matching release archive, prefer the latest stable release and fall back to the latest
+prerelease when no stable release exists, verify it against `SHA256SUMS`, run the
 downloaded binary's version check, and then replace `kigo` in the user install directory. Set
 `KIGO_VERSION`, `KIGO_INSTALL_DIR`, or `KIGO_ADD_TO_PATH=1` to pin a version, choose the destination, or update
 the user PATH. `KIGO_RELEASE_BASE_URL` can point to an HTTPS enterprise mirror containing the archive and
@@ -744,6 +745,14 @@ build, and release-layout checks. A pushed semantic version tag creates the GitH
 ```sh
 git tag -a v0.1.0 -m "Kigo v0.1.0"
 git push origin v0.1.0
+```
+
+Public tag builds require the repository Actions variable `KIGO_DEFAULT_SERVICE_URL`. The release workflow
+validates it and passes it to `build_release.sh`, so downloaded clients use the deployed public service without
+manual configuration. Configure it before pushing a release tag:
+
+```sh
+gh variable set KIGO_DEFAULT_SERVICE_URL --body https://kigo.example
 ```
 
 The release workflow builds from that exact tag, publishes all files in `dist/`, and creates GitHub keyless
