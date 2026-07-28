@@ -119,11 +119,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          prerelease_flag=
+          case "$RELEASE_TAG" in
+            *-*) prerelease_flag=--prerelease ;;
+          esac
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
               --generate-notes \
+              $prerelease_flag \
               --title "Kigo $RELEASE_TAG"
           fi
