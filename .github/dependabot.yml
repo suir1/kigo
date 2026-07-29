@@ -6,9 +6,24 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
-      go-dependencies:
+      pion-dependencies:
         patterns:
-          - "*"
+          - "github.com/pion/*"
+        update-types:
+          - minor
+          - patch
+      charmbracelet-dependencies:
+        patterns:
+          - "github.com/charmbracelet/*"
+        update-types:
+          - minor
+          - patch
+      golang-x-dependencies:
+        patterns:
+          - "golang.org/x/*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: /

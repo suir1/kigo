@@ -84,6 +84,9 @@ jobs:
           go test ./...
           go vet ./...
 
+      - name: Scan release source vulnerabilities
+        run: ./scripts/check_vulnerabilities.sh ./...
+
       - name: Build release artifacts and SBOM
         env:
           KIGO_VERSION: ${{ env.RELEASE_TAG }}

@@ -35,6 +35,7 @@ Implemented in this version:
 - SSH-driven public endpoint matrix with route/checksum assertions and redacted structured diagnostics
 - Tag-driven GitHub releases with CycloneDX SBOMs, SHA-256 checksums, and keyless provenance/SBOM attestations
 - Checksum-verifying macOS/Linux and Windows release installers with offline CI smoke coverage
+- Source vulnerability gates in both CI and release workflows, using a pinned `govulncheck` version
 - `kigo serve` web app + WebSocket signaling + `/api/ice`
 - Capability negotiation automatically selects native TCP for two installed clients and WebRTC whenever a browser participates
 - Signaling can issue room-bound, expiring native relay credentials so installed clients never receive the relay's long-term secret
