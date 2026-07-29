@@ -75,13 +75,13 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running `v0.1.0-dev.20260729.health1`, deployed on 2026-07-29 from
-merge commit `1501a537bc374cee450c55b136d148f6fd5241b6`. `kigo version --json`
-reports Go 1.25.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256
-is `1f93d6478b8320ddf38eadbe295f7511e4c356b1dd8d279976d44509929db53e`.
-This server build is newer than the published client prerelease; the
-no-version installer continues to select
-[`v0.1.0-alpha.2`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.2).
+The VPS is running [`v0.1.0-alpha.3`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.3),
+deployed on 2026-07-29 from merge commit
+`515db4c7f848bf04300c3fddf15dd7d23f3ccd3e`. `kigo version --json` reports
+Go 1.23.1 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
+`07fe73fbbac8ca3fe1ec7402b955a4d09cd536f77cf79917ffd856f5f8f56560`.
+The no-version installer selects this same release and verifies its published
+archive checksum before installation.
 
 Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
 service uses `KIGO_NOTE_STORE=/var/lib/kigo/notes` and `KIGO_NOTE_TTL=720h`.
@@ -89,16 +89,35 @@ The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
 files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
 retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-The previous `v0.1.0-alpha.2` binary is retained at
-`/usr/local/bin/kigo.backup-20260729-143607-alpha2`. To roll back both public
+The immediately previous `v0.1.0-dev.20260729.health1` binary is retained at
+`/usr/local/bin/kigo.backup-20260729-074941-health1`. To roll back both public
 services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260729-143607-alpha2 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260729-074941-health1 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
 ## Verification
+
+The `v0.1.0-alpha.3` deployment passed these checks on 2026-07-29:
+
+- The release workflow passed Windows same-port direct tests, source tests and
+  vet, five-platform builds, archive verification, CycloneDX SBOM generation,
+  build-provenance attestation, and SBOM attestation.
+- The no-version installer selected `v0.1.0-alpha.3`, verified its checksum,
+  and installed commit `515db4c7f848bf04300c3fddf15dd7d23f3ccd3e`.
+- A native-native random 1 MiB transfer disabled direct TCP and LAN discovery,
+  negotiated `service-native-relay` with temporary credentials, and used four
+  striped connections through `106.53.170.243:5140`. Source and destination
+  both had SHA-256
+  `da89889c6299e8b70286995805159f4be2ec3f674ba22bac483feaf6ed2cbc62`.
+- The acknowledged end-to-end rate was 271 KB/s at the sender and 281 KB/s at
+  the receiver. Per-path socket measurements were separately labeled as
+  transport-write rates.
+- Both services were active with zero restarts. Ports `1001/tcp`, `5140/tcp`,
+  and `5140/udp` were listening, and `/api/health` reported the release version
+  with no active TURN allocations, dropped bytes, or quota failures.
 
 The `health1` deployment passed these checks on 2026-07-29:
 
