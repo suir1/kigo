@@ -29,16 +29,17 @@ type Signal struct {
 }
 
 type Options struct {
-	SignalBase      string
-	RoomToken       string
-	ICEServers      []webrtc.ICEServer
-	Timeout         time.Duration
-	Reconnect       *ReconnectState
-	Protocol        string
-	DialContext     func(context.Context, string, string) (net.Conn, error)
-	TLSClientConfig *tls.Config
-	InterfaceFilter func(string) bool
-	IPFilter        func(net.IP) bool
+	SignalBase               string
+	RoomToken                string
+	ICEServers               []webrtc.ICEServer
+	Timeout                  time.Duration
+	Reconnect                *ReconnectState
+	Protocol                 string
+	DialContext              func(context.Context, string, string) (net.Conn, error)
+	TLSClientConfig          *tls.Config
+	InterfaceFilter          func(string) bool
+	IPFilter                 func(net.IP) bool
+	IncludeLoopbackCandidate bool
 }
 
 type ReconnectState struct {
@@ -500,7 +501,7 @@ func signalDialer(opts Options) *websocket.Dialer {
 
 func newPeerConnection(opts Options) (*webrtc.PeerConnection, error) {
 	configuration := webrtc.Configuration{ICEServers: opts.ICEServers}
-	if opts.InterfaceFilter == nil && opts.IPFilter == nil {
+	if opts.InterfaceFilter == nil && opts.IPFilter == nil && !opts.IncludeLoopbackCandidate {
 		return webrtc.NewPeerConnection(configuration)
 	}
 	var settings webrtc.SettingEngine
@@ -509,6 +510,9 @@ func newPeerConnection(opts Options) (*webrtc.PeerConnection, error) {
 	}
 	if opts.IPFilter != nil {
 		settings.SetIPFilter(opts.IPFilter)
+	}
+	if opts.IncludeLoopbackCandidate {
+		settings.SetIncludeLoopbackCandidate(true)
 	}
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(settings))
 	return api.NewPeerConnection(configuration)
