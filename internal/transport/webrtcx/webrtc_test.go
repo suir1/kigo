@@ -28,6 +28,29 @@ func TestNewPeerConnectionAcceptsInterfaceAndIPFilters(t *testing.T) {
 	}
 }
 
+func TestNewPeerConnectionConnectsOverSelectedLoopback(t *testing.T) {
+	interfaceName := loopbackInterfaceName(t)
+	options := Options{
+		ICEServers:               []webrtc.ICEServer{},
+		InterfaceFilter:          func(name string) bool { return name == interfaceName },
+		IPFilter:                 func(ip net.IP) bool { return ip.IsLoopback() },
+		IncludeLoopbackCandidate: true,
+	}
+	newPC := func() (*webrtc.PeerConnection, error) {
+		return newPeerConnection(options)
+	}
+	left, right := newDataChannelTransportPairWithFactory(t, newPC)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := left.Send(ctx, []byte("loopback")); err != nil {
+		t.Fatal(err)
+	}
+	if received, err := right.Recv(ctx); err != nil || string(received) != "loopback" {
+		t.Fatalf("loopback receive = %q, %v", received, err)
+	}
+}
+
 func TestSignalDialerClonesTLSConfig(t *testing.T) {
 	config := &tls.Config{MinVersion: tls.VersionTLS13}
 	dialer := signalDialer(Options{TLSClientConfig: config})
@@ -156,11 +179,21 @@ func (c *stubDataChannel) BufferedAmount() uint64 {
 func newDataChannelTransportPair(t *testing.T) (*DataChannelTransport, *DataChannelTransport) {
 	t.Helper()
 	configuration := webrtc.Configuration{}
-	leftPC, err := webrtc.NewPeerConnection(configuration)
+	return newDataChannelTransportPairWithFactory(t, func() (*webrtc.PeerConnection, error) {
+		return webrtc.NewPeerConnection(configuration)
+	})
+}
+
+func newDataChannelTransportPairWithFactory(
+	t *testing.T,
+	newPC func() (*webrtc.PeerConnection, error),
+) (*DataChannelTransport, *DataChannelTransport) {
+	t.Helper()
+	leftPC, err := newPC()
 	if err != nil {
 		t.Fatal(err)
 	}
-	rightPC, err := webrtc.NewPeerConnection(configuration)
+	rightPC, err := newPC()
 	if err != nil {
 		_ = leftPC.Close()
 		t.Fatal(err)
@@ -221,4 +254,19 @@ func newDataChannelTransportPair(t *testing.T) (*DataChannelTransport, *DataChan
 		_ = right.Close()
 	})
 	return left, right
+}
+
+func loopbackInterfaceName(t *testing.T) string {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback != 0 {
+			return iface.Name
+		}
+	}
+	t.Fatal("no active loopback interface found")
+	return ""
 }

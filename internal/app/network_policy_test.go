@@ -39,6 +39,9 @@ func TestSelectedInterfaceControlsDirectListenAdvertiseAndDoctor(t *testing.T) {
 	if scope.Interface != interfaceName || scope.Source != "selected-interface" {
 		t.Fatalf("route scope = %#v", scope)
 	}
+	if !webRTCIncludeLoopbackCandidate(g) {
+		t.Fatal("selected loopback interface did not enable WebRTC loopback candidates")
+	}
 }
 
 func TestSelectedInterfaceRejectsConflictingDirectListen(t *testing.T) {

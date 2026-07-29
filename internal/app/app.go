@@ -720,15 +720,16 @@ func dialWebRTCTransport(
 		return nil, err
 	}
 	options := webrtcx.Options{
-		SignalBase:      g.Signal,
-		RoomToken:       roomToken,
-		ICEServers:      iceServers,
-		Reconnect:       reconnect,
-		Protocol:        g.Protocol,
-		DialContext:     webRTCDialContext(g),
-		TLSClientConfig: clientTLSConfig(g),
-		InterfaceFilter: webRTCInterfaceFilter(g),
-		IPFilter:        webRTCIPFilter(g),
+		SignalBase:               g.Signal,
+		RoomToken:                roomToken,
+		ICEServers:               iceServers,
+		Reconnect:                reconnect,
+		Protocol:                 g.Protocol,
+		DialContext:              webRTCDialContext(g),
+		TLSClientConfig:          clientTLSConfig(g),
+		InterfaceFilter:          webRTCInterfaceFilter(g),
+		IPFilter:                 webRTCIPFilter(g),
+		IncludeLoopbackCandidate: webRTCIncludeLoopbackCandidate(g),
 	}
 	var t transport.Transport
 	if role == "sender" {

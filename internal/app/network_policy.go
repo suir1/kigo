@@ -280,6 +280,19 @@ func webRTCIPFilter(g *globalOptions) func(net.IP) bool {
 	return policy.IPFilter
 }
 
+func webRTCIncludeLoopbackCandidate(g *globalOptions) bool {
+	policy := selectedNetworkPolicy(g)
+	if policy == nil {
+		return false
+	}
+	for _, ip := range policy.IPs() {
+		if ip.IsLoopback() {
+			return true
+		}
+	}
+	return false
+}
+
 func outboundSTUNOptions(g *globalOptions) netprobe.STUNOptions {
 	policy := selectedNetworkPolicy(g)
 	if policy == nil {
