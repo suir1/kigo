@@ -94,6 +94,7 @@ kigo serve --note-store /var/lib/kigo/notes --note-ttl 720h
 
 KIGO_NOTE_STORE=/var/lib/kigo/notes
 KIGO_NOTE_TTL=720h
+KIGO_NOTE_UPDATES_PER_MINUTE=240
 ```
 
 An empty `--note-store` keeps snapshots in server memory and therefore does not survive a restart. Production

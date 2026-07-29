@@ -6,11 +6,14 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 	"github.com/suir1/kigo/internal/transport"
 )
@@ -103,6 +106,51 @@ func TestSignalURLIncludesNoteProtocol(t *testing.T) {
 	}
 }
 
+func TestSignalerReportsRemoteCandidateErrors(t *testing.T) {
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		candidate := webrtc.ICECandidateInit{Candidate: "not-an-ice-candidate"}
+		if err := conn.WriteJSON(Signal{Type: "candidate", Candidate: &candidate}); err != nil {
+			return
+		}
+		<-done
+	}))
+	defer func() {
+		close(done)
+		server.Close()
+	}()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	candidates := newRemoteCandidateBuffer(pc)
+	if err := candidates.markReady(); err != nil {
+		t.Fatal(err)
+	}
+	sig := newSignaler(ws)
+	go sig.readLoop(candidates, nil)
+
+	select {
+	case err := <-sig.errs:
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "candidate") {
+			t.Fatalf("candidate error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("invalid remote candidate was silently ignored")
+	}
+}
+
 func TestDataChannelTransportTransfersAndPropagatesClose(t *testing.T) {
 	left, right := newDataChannelTransportPair(t)
 	payload := bytes.Repeat([]byte("kigo"), 16*1024)
@@ -155,6 +203,42 @@ func TestDataChannelTransportBackpressureHonorsContextAndLowSignal(t *testing.T)
 	}
 	if channel.sends.Load() != 1 {
 		t.Fatalf("data channel sends = %d, want 1", channel.sends.Load())
+	}
+}
+
+func TestDataChannelTransportCloseUnblocksSaturatedReceive(t *testing.T) {
+	left, right := newDataChannelTransportPair(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for index := 0; index < cap(right.recv)+16; index++ {
+		if err := left.Send(ctx, []byte{byte(index)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(right.recv) < cap(right.recv) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(right.recv) != cap(right.recv) {
+		t.Fatalf("receive queue length = %d, want %d", len(right.recv), cap(right.recv))
+	}
+	if err := right.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-right.closed:
+	case <-time.After(time.Second):
+		t.Fatal("transport close did not unblock saturated receive callback")
+	}
+	graceful := make(chan error, 1)
+	go func() { graceful <- right.pc.GracefulClose() }()
+	select {
+	case err := <-graceful:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("saturated receive callback did not exit after transport close")
 	}
 }
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -203,6 +204,72 @@ func TestPersistentNoteQuarantinesCorruptSnapshots(t *testing.T) {
 	assertPersistentNoteQuarantined(t, cleanupPath, cleanupPayload)
 }
 
+func TestPersistentNoteLimitsUpdatesAfterConnect(t *testing.T) {
+	const code = "RATE-LIMITED-NOTEPAD-2026"
+	s := New(Config{SignalRequestsPerMinute: -1})
+	server := httptest.NewServer(s.handler())
+	defer server.Close()
+	token := secure.RoomToken(code)
+	padToken, err := note.PersistentPadToken("main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialPersistentNoteTest(t, persistentNoteTestURL(server.URL, token, padToken))
+	defer conn.Close()
+	assertPersistentState(t, conn, 0, nil)
+
+	record, err := note.SealPersistentDocument(code, note.Document{
+		Pad: "main", Text: "bounded", Revision: 1, Timestamp: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for generation := uint64(0); generation < 240; generation++ {
+		if err := conn.WriteJSON(note.PersistentMessage{
+			Type: note.PersistentPut, Version: note.PersistentProtocolVersion,
+			BaseGeneration: generation, Record: &record,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		message := readPersistentMessage(t, conn)
+		if message.Type != note.PersistentState || message.Generation != generation+1 {
+			t.Fatalf("update %d state = %#v", generation+1, message)
+		}
+	}
+	if err := conn.WriteJSON(note.PersistentMessage{
+		Type: note.PersistentPut, Version: note.PersistentProtocolVersion,
+		BaseGeneration: 240, Record: &record,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	message := readPersistentMessage(t, conn)
+	if message.Type != note.PersistentError || !strings.Contains(message.Error, "rate limit") {
+		t.Fatalf("rate-limited update response = %#v", message)
+	}
+}
+
+func TestPersistentNoteCleanupRemovesExpiredQuarantines(t *testing.T) {
+	store := t.TempDir()
+	s := New(Config{NoteStore: store, NoteTTL: time.Hour, SignalRequestsPerMinute: -1})
+	now := time.Now().UTC()
+	base := strings.Repeat("b", 64) + ".json.corrupt-"
+	oldPath := filepath.Join(store, base+fmt.Sprint(now.Add(-8*24*time.Hour).UnixNano()))
+	freshPath := filepath.Join(store, base+fmt.Sprint(now.Add(-time.Hour).UnixNano()))
+	for _, path := range []string{oldPath, freshPath} {
+		if err := os.WriteFile(path, []byte("encrypted diagnostic"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.cleanupPersistentNoteFiles(now)
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("expired quarantine still exists: %v", err)
+	}
+	if _, err := os.Stat(freshPath); err != nil {
+		t.Fatalf("fresh quarantine was removed: %v", err)
+	}
+}
+
 func persistentNoteTestURL(base, token, padToken string) string {
 	return "ws" + strings.TrimPrefix(base, "http") + "/api/note-sync/" + token + "/" + padToken
 }
@@ -218,11 +285,7 @@ func dialPersistentNoteTest(t *testing.T, url string) *websocket.Conn {
 
 func assertPersistentState(t *testing.T, conn *websocket.Conn, generation uint64, want *note.Document) {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	var message note.PersistentMessage
-	if err := conn.ReadJSON(&message); err != nil {
-		t.Fatal(err)
-	}
+	message := readPersistentMessage(t, conn)
 	if message.Type != note.PersistentState || message.Version != note.PersistentProtocolVersion || message.Generation != generation {
 		t.Fatalf("state = %#v", message)
 	}
@@ -242,6 +305,16 @@ func assertPersistentState(t *testing.T, conn *websocket.Conn, generation uint64
 	if got != *want {
 		t.Fatalf("document = %#v, want %#v", got, *want)
 	}
+}
+
+func readPersistentMessage(t *testing.T, conn *websocket.Conn) note.PersistentMessage {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var message note.PersistentMessage
+	if err := conn.ReadJSON(&message); err != nil {
+		t.Fatal(err)
+	}
+	return message
 }
 
 func assertPersistentNoteStoreEncrypted(t *testing.T, store string, forbidden ...string) {

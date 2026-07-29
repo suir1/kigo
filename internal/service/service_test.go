@@ -588,6 +588,7 @@ func TestValidateServiceConfigRejectsUnsafeValues(t *testing.T) {
 	tests := []Config{
 		{SignalRequestsPerMinute: -2},
 		{NoteTTL: -time.Second},
+		{NoteUpdatesPerMinute: -2},
 		{TURNCredentialTTL: 30 * time.Second},
 		{TURNCredentialTTL: maxTURNCredentialTTL + time.Second},
 		{TURNCredentialsPerMinute: -2},
