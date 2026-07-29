@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ type persistentNoteHub struct {
 	updated    time.Time
 	expires    time.Time
 	clients    map[*persistentNoteClient]struct{}
+	mu         sync.Mutex
 	deliveryMu sync.Mutex
 }
 
@@ -114,36 +116,61 @@ func persistentNotePath(path string) (string, string, bool) {
 
 func (s *Server) joinPersistentNote(key string, client *persistentNoteClient) (*persistentNoteHub, note.PersistentMessage, error) {
 	s.noteMu.Lock()
-	defer s.noteMu.Unlock()
 	hub := s.notes[key]
+	if hub != nil {
+		hub.mu.Lock()
+		s.noteMu.Unlock()
+		defer hub.mu.Unlock()
+		return addPersistentNoteClient(hub, client)
+	}
+	s.noteMu.Unlock()
+
+	loaded, err := s.loadPersistentNote(key, time.Now())
+	if err != nil {
+		return nil, note.PersistentMessage{}, err
+	}
+	if loaded == nil {
+		loaded = &persistentNoteHub{key: key, clients: map[*persistentNoteClient]struct{}{}}
+	}
+
+	s.noteMu.Lock()
+	hub = s.notes[key]
 	if hub == nil {
-		loaded, err := s.loadPersistentNote(key, time.Now())
-		if err != nil {
-			return nil, note.PersistentMessage{}, err
-		}
 		hub = loaded
-		if hub == nil {
-			hub = &persistentNoteHub{key: key, clients: map[*persistentNoteClient]struct{}{}}
-		}
 		s.notes[key] = hub
 	}
+	hub.mu.Lock()
+	s.noteMu.Unlock()
+	defer hub.mu.Unlock()
+	return addPersistentNoteClient(hub, client)
+}
+
+func addPersistentNoteClient(hub *persistentNoteHub, client *persistentNoteClient) (*persistentNoteHub, note.PersistentMessage, error) {
 	if len(hub.clients) >= persistentNoteMaxClients {
 		return nil, note.PersistentMessage{}, errors.New("persistent notepad has too many connected clients")
 	}
 	hub.clients[client] = struct{}{}
-	return hub, persistentNoteState(hub), nil
+	return hub, persistentNoteStateLocked(hub), nil
 }
 
 func (s *Server) leavePersistentNote(hub *persistentNoteHub, client *persistentNoteClient) {
 	if hub == nil || client == nil {
 		return
 	}
+	hub.deliveryMu.Lock()
+	defer hub.deliveryMu.Unlock()
 	s.noteMu.Lock()
-	defer s.noteMu.Unlock()
+	if current := s.notes[hub.key]; current != hub {
+		s.noteMu.Unlock()
+		return
+	}
+	hub.mu.Lock()
 	delete(hub.clients, client)
 	if len(hub.clients) == 0 && hub.record == nil {
 		delete(s.notes, hub.key)
 	}
+	hub.mu.Unlock()
+	s.noteMu.Unlock()
 }
 
 func (s *Server) applyPersistentNote(hub *persistentNoteHub, client *persistentNoteClient, message note.PersistentMessage) error {
@@ -155,9 +182,11 @@ func (s *Server) applyPersistentNote(hub *persistentNoteHub, client *persistentN
 		s.noteMu.Unlock()
 		return errors.New("persistent notepad expired")
 	}
+	hub.mu.Lock()
+	s.noteMu.Unlock()
 	if message.BaseGeneration != hub.generation {
-		state := persistentNoteState(hub)
-		s.noteMu.Unlock()
+		state := persistentNoteStateLocked(hub)
+		hub.mu.Unlock()
 		return client.write(state)
 	}
 	now := time.Now()
@@ -169,20 +198,21 @@ func (s *Server) applyPersistentNote(hub *persistentNoteHub, client *persistentN
 		ExpiresAt:  now.Add(s.cfg.NoteTTL).UnixMilli(),
 		Record:     record,
 	}
+	hub.mu.Unlock()
 	if err := s.writePersistentNote(hub.key, next); err != nil {
-		s.noteMu.Unlock()
 		return fmt.Errorf("persist encrypted notepad: %w", err)
 	}
+	hub.mu.Lock()
 	hub.generation = next.Generation
 	hub.record = &record
 	hub.updated = now
 	hub.expires = time.UnixMilli(next.ExpiresAt)
-	state := persistentNoteState(hub)
+	state := persistentNoteStateLocked(hub)
 	clients := make([]*persistentNoteClient, 0, len(hub.clients))
 	for connected := range hub.clients {
 		clients = append(clients, connected)
 	}
-	s.noteMu.Unlock()
+	hub.mu.Unlock()
 
 	var senderErr error
 	var senderErrMu sync.Mutex
@@ -205,7 +235,7 @@ func (s *Server) applyPersistentNote(hub *persistentNoteHub, client *persistentN
 	return senderErr
 }
 
-func persistentNoteState(hub *persistentNoteHub) note.PersistentMessage {
+func persistentNoteStateLocked(hub *persistentNoteHub) note.PersistentMessage {
 	message := note.PersistentMessage{
 		Type:       note.PersistentState,
 		Version:    note.PersistentProtocolVersion,
@@ -258,14 +288,20 @@ func (c *persistentNoteClient) pingLoop(done <-chan struct{}) {
 
 func (s *Server) persistentNoteStats() map[string]any {
 	s.noteMu.Lock()
-	defer s.noteMu.Unlock()
+	hubs := make([]*persistentNoteHub, 0, len(s.notes))
+	for _, hub := range s.notes {
+		hubs = append(hubs, hub)
+	}
+	s.noteMu.Unlock()
 	documents := 0
 	clients := 0
-	for _, hub := range s.notes {
+	for _, hub := range hubs {
+		hub.mu.Lock()
 		if hub.record != nil {
 			documents++
 		}
 		clients += len(hub.clients)
+		hub.mu.Unlock()
 	}
 	return map[string]any{
 		"configured": s.cfg.NoteStore != "",
@@ -295,13 +331,23 @@ func (s *Server) loadPersistentNote(key string, now time.Time) (*persistentNoteH
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 	var record persistentNoteDiskRecord
-	if err := json.NewDecoder(io.LimitReader(file, note.MaxPersistentMessageSize+1)).Decode(&record); err != nil {
-		return nil, err
+	decodeErr := json.NewDecoder(io.LimitReader(file, note.MaxPersistentMessageSize+1)).Decode(&record)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		if err := quarantinePersistentNote(path, decodeErr); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	if err := validatePersistentNoteDiskRecord(record); err != nil {
-		return nil, err
+		if quarantineErr := quarantinePersistentNote(path, err); quarantineErr != nil {
+			return nil, quarantineErr
+		}
+		return nil, nil
 	}
 	if record.ExpiresAt <= now.UnixMilli() {
 		_ = os.Remove(path)
@@ -359,6 +405,21 @@ func (s *Server) writePersistentNote(key string, record persistentNoteDiskRecord
 		_ = os.Remove(tempPath)
 		return err
 	}
+	return syncDirectory(dir)
+}
+
+func quarantinePersistentNote(path string, cause error) error {
+	quarantinePath := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UTC().UnixNano())
+	if err := os.Rename(path, quarantinePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("quarantine corrupt persistent notepad: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		log.Printf("persistent notepad quarantine directory sync failed for %s: %v", filepath.Base(path), err)
+	}
+	log.Printf("quarantined corrupt persistent notepad %s: %v", filepath.Base(path), cause)
 	return nil
 }
 
@@ -371,15 +432,33 @@ func validatePersistentNoteDiskRecord(record persistentNoteDiskRecord) error {
 
 func (s *Server) cleanupPersistentNotes(now time.Time) {
 	s.noteMu.Lock()
-	defer s.noteMu.Unlock()
-	for key, hub := range s.notes {
-		if len(hub.clients) != 0 || hub.record == nil || now.Before(hub.expires) {
+	hubs := make([]*persistentNoteHub, 0, len(s.notes))
+	for _, hub := range s.notes {
+		hubs = append(hubs, hub)
+	}
+	s.noteMu.Unlock()
+
+	for _, hub := range hubs {
+		hub.deliveryMu.Lock()
+		s.noteMu.Lock()
+		if current := s.notes[hub.key]; current != hub {
+			s.noteMu.Unlock()
+			hub.deliveryMu.Unlock()
 			continue
 		}
-		delete(s.notes, key)
-		if path := s.persistentNotePath(key); path != "" {
-			_ = os.Remove(path)
+		hub.mu.Lock()
+		expired := len(hub.clients) == 0 && hub.record != nil && !now.Before(hub.expires)
+		if expired {
+			delete(s.notes, hub.key)
 		}
+		hub.mu.Unlock()
+		s.noteMu.Unlock()
+		if expired {
+			if path := s.persistentNotePath(hub.key); path != "" {
+				_ = os.Remove(path)
+			}
+		}
+		hub.deliveryMu.Unlock()
 	}
 	s.cleanupPersistentNoteFiles(now)
 }
@@ -405,7 +484,15 @@ func (s *Server) cleanupPersistentNoteFiles(now time.Time) {
 		var record persistentNoteDiskRecord
 		err = json.NewDecoder(io.LimitReader(file, note.MaxPersistentMessageSize+1)).Decode(&record)
 		_ = file.Close()
-		if err == nil && record.ExpiresAt > 0 && record.ExpiresAt <= now.UnixMilli() {
+		if err != nil {
+			_ = quarantinePersistentNote(filePath, err)
+			continue
+		}
+		if err := validatePersistentNoteDiskRecord(record); err != nil {
+			_ = quarantinePersistentNote(filePath, err)
+			continue
+		}
+		if record.ExpiresAt <= now.UnixMilli() {
 			_ = os.Remove(filePath)
 		}
 	}

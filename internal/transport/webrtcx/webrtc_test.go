@@ -1,10 +1,18 @@
 package webrtcx
 
 import (
+	"bytes"
+	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+	"github.com/suir1/kigo/internal/transport"
 )
 
 func TestNewPeerConnectionAcceptsInterfaceAndIPFilters(t *testing.T) {
@@ -70,4 +78,147 @@ func TestSignalURLIncludesNoteProtocol(t *testing.T) {
 	if got != want {
 		t.Fatalf("note signal URL = %q, want %q", got, want)
 	}
+}
+
+func TestDataChannelTransportTransfersAndPropagatesClose(t *testing.T) {
+	left, right := newDataChannelTransportPair(t)
+	payload := bytes.Repeat([]byte("kigo"), 16*1024)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := left.Send(ctx, payload); err != nil {
+		t.Fatal(err)
+	}
+	received, err := right.Recv(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(received, payload) {
+		t.Fatalf("received %d bytes, want %d", len(received), len(payload))
+	}
+	if metrics := left.SendMetrics(); metrics.BufferLimit != dataChannelBufferedHigh {
+		t.Fatalf("send metrics = %#v", metrics)
+	}
+
+	if err := left.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := right.Recv(ctx); !errors.Is(err, transport.ErrClosed) {
+		t.Fatalf("receive after peer close = %v, want %v", err, transport.ErrClosed)
+	}
+}
+
+func TestDataChannelTransportBackpressureHonorsContextAndLowSignal(t *testing.T) {
+	channel := &stubDataChannel{}
+	channel.buffered.Store(dataChannelBufferedHigh + 1)
+	transport := &DataChannelTransport{
+		dc: channel, recv: make(chan []byte), opened: make(chan struct{}),
+		closed: make(chan struct{}), low: make(chan struct{}, 1),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := transport.waitBuffered(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitBuffered error = %v, want %v", err, context.DeadlineExceeded)
+	}
+
+	channel.buffered.Store(0)
+	transport.low <- struct{}{}
+	if err := transport.waitBuffered(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := transport.Send(context.Background(), []byte("ready")); err != nil {
+		t.Fatal(err)
+	}
+	if channel.sends.Load() != 1 {
+		t.Fatalf("data channel sends = %d, want 1", channel.sends.Load())
+	}
+}
+
+type stubDataChannel struct {
+	buffered atomic.Uint64
+	sends    atomic.Uint64
+}
+
+func (c *stubDataChannel) Send([]byte) error {
+	c.sends.Add(1)
+	return nil
+}
+
+func (*stubDataChannel) Close() error {
+	return nil
+}
+
+func (c *stubDataChannel) BufferedAmount() uint64 {
+	return c.buffered.Load()
+}
+
+func newDataChannelTransportPair(t *testing.T) (*DataChannelTransport, *DataChannelTransport) {
+	t.Helper()
+	configuration := webrtc.Configuration{}
+	leftPC, err := webrtc.NewPeerConnection(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightPC, err := webrtc.NewPeerConnection(configuration)
+	if err != nil {
+		_ = leftPC.Close()
+		t.Fatal(err)
+	}
+	leftDC, err := leftPC.CreateDataChannel("kigo-test", nil)
+	if err != nil {
+		_ = leftPC.Close()
+		_ = rightPC.Close()
+		t.Fatal(err)
+	}
+	left := wrap(leftPC, leftDC, nil)
+	rightReady := make(chan *DataChannelTransport, 1)
+	rightPC.OnDataChannel(func(channel *webrtc.DataChannel) {
+		rightReady <- wrap(rightPC, channel, nil)
+	})
+
+	offer, err := leftPC.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftGathered := webrtc.GatheringCompletePromise(leftPC)
+	if err := leftPC.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	<-leftGathered
+	if err := rightPC.SetRemoteDescription(*leftPC.LocalDescription()); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := rightPC.CreateAnswer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightGathered := webrtc.GatheringCompletePromise(rightPC)
+	if err := rightPC.SetLocalDescription(answer); err != nil {
+		t.Fatal(err)
+	}
+	<-rightGathered
+	if err := leftPC.SetRemoteDescription(*rightPC.LocalDescription()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var right *DataChannelTransport
+	select {
+	case right = <-rightReady:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := left.waitOpen(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := right.waitOpen(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+	return left, right
 }

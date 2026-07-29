@@ -135,11 +135,13 @@ func (s *PersistentSession) SyncWorkspace(ctx context.Context, workspace *Worksp
 	s.mu.Unlock()
 
 	var applied []Document
+	var remote Document
 	if initial.Record != nil {
 		document, err := OpenPersistentDocument(s.code, s.pad, *initial.Record)
 		if err != nil {
 			return nil, err
 		}
+		remote = document
 		changed, current, err := workspace.ApplyRemote(document)
 		if err != nil {
 			return nil, err
@@ -149,7 +151,7 @@ func (s *PersistentSession) SyncWorkspace(ctx context.Context, workspace *Worksp
 		}
 	}
 	current := workspace.Snapshot(s.pad)
-	if current.Revision > 0 && (initial.Record == nil || len(applied) == 0) {
+	if current.Revision > 0 && (initial.Record == nil || compareDocuments(current, remote) > 0) {
 		if err := s.publishDocument(ctx, current); err != nil {
 			return nil, err
 		}

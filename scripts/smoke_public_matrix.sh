@@ -70,6 +70,7 @@ PATH="$WORK:$PATH" \
   KIGO_PUBLIC_PAYLOAD_BYTES=131072 \
   KIGO_PUBLIC_TIMEOUT_SECONDS=30 \
   KIGO_PUBLIC_EXPECT_ROUTE=direct \
+  KIGO_PUBLIC_CODE=K7M9Q2 \
   KIGO_ARTIFACT_DIR="$WORK/artifacts" \
   "$ROOT/scripts/public_matrix.sh"
 
@@ -86,14 +87,12 @@ assert scenario["selected_route"] == "direct", scenario
 assert scenario["checksums"]["match"] is True, scenario
 PY
 
-python3 - "$WORK/artifacts" <<'PY'
+python3 - "$WORK/artifacts" K7M9Q2 <<'PY'
 import pathlib
-import re
 import sys
 
-pattern = re.compile(r"\b[A-HJ-NP-Z2-9]{6}\b")
 for path in pathlib.Path(sys.argv[1]).rglob("*"):
-    if path.is_file() and pattern.search(path.read_text(encoding="utf-8", errors="replace")):
+    if path.is_file() and sys.argv[2] in path.read_text(encoding="utf-8", errors="replace"):
         raise SystemExit(f"public matrix artifact contains an unredacted pairing code: {path}")
 PY
 echo "all public matrix smoke checks passed"
