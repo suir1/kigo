@@ -132,6 +132,18 @@ def local_host_to_native(binary, service_url, local_url, token):
         lambda state: state.get("connected") and state.get("pad") == pad,
         "local host single-user availability",
     )
+    recents = api(local_url, token, "/api/note/recents")
+    if not any(entry.get("code") == code and entry.get("pad") == pad for entry in recents):
+        raise RuntimeError("local host did not record recent notepad: " + repr(recents))
+    api(
+        local_url,
+        token,
+        "/api/note/recents/favorite",
+        {"code": code, "pad": pad, "favorite": True},
+    )
+    recents = api(local_url, token, "/api/note/recents")
+    if not recents or not recents[0].get("favorite"):
+        raise RuntimeError("local recent notepad was not favorited: " + repr(recents))
     native = NativeNote(
         native_args(binary, service_url, "note", "--pad", pad, "join", code)
     )
@@ -179,6 +191,15 @@ def local_host_to_native(binary, service_url, local_url, token):
         if not restored.get("draft_recovered") or restored.get("text") != persisted_text:
             raise RuntimeError("local host did not restore encrypted draft: " + repr(restored))
         api(local_url, token, "/api/note/leave", {})
+        api(
+            local_url,
+            token,
+            "/api/note/recents/forget",
+            {"code": code, "pad": pad},
+        )
+        recents = api(local_url, token, "/api/note/recents")
+        if any(entry.get("code") == code and entry.get("pad") == pad for entry in recents):
+            raise RuntimeError("local recent notepad was not removed: " + repr(recents))
     finally:
         native.close()
 

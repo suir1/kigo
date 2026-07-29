@@ -115,6 +115,13 @@ const localWebHTML = `<!doctype html>
             <button id="joinNote" class="secondary-button" type="button">Open</button>
           </div>
         </div>
+        <div class="note-recents-section">
+          <div class="note-recents-heading">
+            <strong>Recent notepads</strong>
+            <span>Stored on this device</span>
+          </div>
+          <div id="noteRecents" class="note-recents"><span class="note-recents-empty">No recent notepads.</span></div>
+        </div>
         <div id="noteShareArea" class="note-share hidden">
           <div>
             <span class="eyebrow">Pairing code</span>
@@ -464,6 +471,69 @@ input:focus, select:focus, textarea:focus {
   gap: 10px;
 }
 
+.note-recents-section {
+  margin: 0 0 22px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 0;
+}
+
+.note-recents-heading,
+.note-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-recents-heading {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.note-recents-heading span,
+.note-recents-empty,
+.note-recent-pad {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.note-recent-row {
+  min-height: 38px;
+  border-top: 1px solid var(--line);
+}
+
+.note-recent-identity {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.note-recent-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.note-recent-row label {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.note-recent-row input { width: auto; }
+
+.note-recent-row button {
+  min-height: 30px;
+  border: 1px solid #98a9b8;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  padding: 4px 9px;
+}
+
 .inline-action {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -749,6 +819,7 @@ const noteStatus = document.querySelector("#noteStatus");
 const noteShareArea = document.querySelector("#noteShareArea");
 const notePairingCode = document.querySelector("#notePairingCode");
 const noteShareLink = document.querySelector("#noteShareLink");
+const noteRecents = document.querySelector("#noteRecents");
 const hostNote = document.querySelector("#hostNote");
 const joinNote = document.querySelector("#joinNote");
 const clearNote = document.querySelector("#clearNote");
@@ -771,6 +842,8 @@ let currentNote = { running: false, connected: false, status: "idle", text: "" }
 let noteDirty = false;
 let noteEditVersion = 0;
 let noteDebounce = null;
+let noteRecentState = [];
+let noteRecentLoadedID = 0;
 let pathBrowserState = { target: null, mode: "send", response: null };
 
 async function api(path, options = {}) {
@@ -904,6 +977,87 @@ function syncControls() {
   noteEditor.disabled = !currentNote.connected;
   clearNote.disabled = !currentNote.connected;
   leaveNote.disabled = !currentNote.running;
+  noteRecents.querySelectorAll('[data-note-recent-open]').forEach((button) => {
+    button.disabled = noteStartBlocked;
+  });
+}
+
+function renderNoteRecents(entries) {
+  noteRecentState = Array.isArray(entries) ? entries : [];
+  noteRecents.replaceChildren();
+  if (!noteRecentState.length) {
+    const empty = document.createElement("span");
+    empty.className = "note-recents-empty";
+    empty.textContent = "No recent notepads.";
+    noteRecents.append(empty);
+    return;
+  }
+  noteRecentState.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "note-recent-row";
+    const identity = document.createElement("div");
+    identity.className = "note-recent-identity";
+    const code = document.createElement("strong");
+    code.className = "note-recent-code";
+    code.textContent = entry.code;
+    const pad = document.createElement("span");
+    pad.className = "note-recent-pad";
+    pad.textContent = entry.pad;
+    identity.append(code, pad);
+    const favoriteLabel = document.createElement("label");
+    const favorite = document.createElement("input");
+    favorite.type = "checkbox";
+    favorite.checked = Boolean(entry.favorite);
+    favorite.addEventListener("change", async () => {
+      try {
+        await api("/api/note/recents/favorite", {
+          method: "POST",
+          body: JSON.stringify({ code: entry.code, pad: entry.pad, favorite: favorite.checked }),
+        });
+        await refreshNoteRecents();
+      } catch (error) {
+        favorite.checked = !favorite.checked;
+        noteStatus.textContent = "Failed: " + error.message;
+        noteStatus.className = "note-status failed";
+      }
+    });
+    favoriteLabel.append(favorite, document.createTextNode("Favorite"));
+    const open = document.createElement("button");
+    open.type = "button";
+    open.dataset.noteRecentOpen = "";
+    open.textContent = "Open";
+    open.disabled = Boolean(currentJob.running || currentNote.running);
+    open.addEventListener("click", () => {
+      noteCode.value = entry.code;
+      notePad.value = entry.pad;
+      startNote("/api/note/join", { code: entry.code, pad: entry.pad });
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", async () => {
+      try {
+        await api("/api/note/recents/forget", {
+          method: "POST",
+          body: JSON.stringify({ code: entry.code, pad: entry.pad }),
+        });
+        await refreshNoteRecents();
+      } catch (error) {
+        noteStatus.textContent = "Failed: " + error.message;
+        noteStatus.className = "note-status failed";
+      }
+    });
+    row.append(identity, favoriteLabel, open, remove);
+    noteRecents.append(row);
+  });
+}
+
+async function refreshNoteRecents() {
+  try {
+    renderNoteRecents(await api("/api/note/recents"));
+  } catch (error) {
+    noteRecents.textContent = "Recent notepads unavailable: " + error.message;
+  }
 }
 
 function renderJob(job) {
@@ -963,6 +1117,7 @@ function noteStatusText(state) {
   else if (state.status === "peer_left") status = "Peer left";
   else if (state.status === "error") status = "Failed: " + (state.error || "unknown error");
   if (state.draft_warning) return status + " - Draft warning: " + state.draft_warning;
+  if (state.recent_warning) return status + " - Recent list warning: " + state.recent_warning;
   if (state.draft_recovered) return status + " - Recovered encrypted draft revision " + state.revision;
   return status;
 }
@@ -996,6 +1151,10 @@ function renderNote(state) {
     noteStatus.classList.add("canceled");
   }
   syncControls();
+  if (state.connected && noteRecentLoadedID !== state.id) {
+    noteRecentLoadedID = state.id;
+    refreshNoteRecents();
+  }
 }
 
 async function start(path, body) {
@@ -1197,6 +1356,7 @@ async function loadConfig() {
 loadConfig();
 refreshJob();
 refreshNote();
+refreshNoteRecents();
 setInterval(refreshJob, 700);
 setInterval(refreshNote, 500);
 `

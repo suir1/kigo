@@ -317,6 +317,84 @@ func TestLocalWebNoteAPIAuthValidationAndHostLink(t *testing.T) {
 	}
 }
 
+func TestLocalWebNoteRecentAPIReopensFavoritesAndForgets(t *testing.T) {
+	peer := newFakeLocalWebNotePeer()
+	store := newLocalWebNoteStoreWithConnector(
+		context.Background(),
+		&globalOptions{},
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
+			return peer, nil
+		},
+	)
+	store.recents = note.NewRecentStore(filepath.Join(t.TempDir(), "note-recents.json"))
+	server := &localWebServer{token: "test-token", note: store}
+	handler := server.handler()
+
+	if _, err := store.StartJoinPad("PROJECT-ALPHA-2026", "roadmap"); err != nil {
+		t.Fatal(err)
+	}
+	waitForLocalWebNote(t, store, func(state localWebNoteSnapshot) bool { return state.Connected })
+
+	recents := localWebJSONRequest(t, handler, http.MethodGet, "/api/note/recents", "")
+	if recents.Code != http.StatusOK ||
+		!strings.Contains(recents.Body.String(), `"code":"PROJECT-ALPHA-2026"`) ||
+		!strings.Contains(recents.Body.String(), `"pad":"roadmap"`) {
+		t.Fatalf("recent list status=%d body=%s", recents.Code, recents.Body.String())
+	}
+
+	favorite := localWebJSONRequest(
+		t,
+		handler,
+		http.MethodPost,
+		"/api/note/recents/favorite",
+		`{"code":"PROJECT-ALPHA-2026","pad":"roadmap","favorite":true}`,
+	)
+	if favorite.Code != http.StatusOK {
+		t.Fatalf("favorite status=%d body=%s", favorite.Code, favorite.Body.String())
+	}
+	recents = localWebJSONRequest(t, handler, http.MethodGet, "/api/note/recents", "")
+	if !strings.Contains(recents.Body.String(), `"favorite":true`) {
+		t.Fatalf("favorite list body=%s", recents.Body.String())
+	}
+
+	forget := localWebJSONRequest(
+		t,
+		handler,
+		http.MethodPost,
+		"/api/note/recents/forget",
+		`{"code":"PROJECT-ALPHA-2026","pad":"roadmap"}`,
+	)
+	if forget.Code != http.StatusOK {
+		t.Fatalf("forget status=%d body=%s", forget.Code, forget.Body.String())
+	}
+	recents = localWebJSONRequest(t, handler, http.MethodGet, "/api/note/recents", "")
+	if strings.TrimSpace(recents.Body.String()) != "[]" {
+		t.Fatalf("forgotten recent list body=%s", recents.Body.String())
+	}
+	store.Leave()
+}
+
+func TestLocalWebNoteFailedConnectionDoesNotCreateRecent(t *testing.T) {
+	store := newLocalWebNoteStoreWithConnector(
+		context.Background(),
+		&globalOptions{},
+		func(context.Context, string, bool, string) (localWebNotePeer, error) {
+			return nil, transport.ErrClosed
+		},
+	)
+	store.recents = note.NewRecentStore(filepath.Join(t.TempDir(), "note-recents.json"))
+	if _, err := store.StartJoin("K7M9Q2"); err != nil {
+		t.Fatal(err)
+	}
+	waitForLocalWebNote(t, store, func(state localWebNoteSnapshot) bool {
+		return !state.Running && state.Status == "error"
+	})
+	entries, err := store.RecentNotes()
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed connection recents=%#v err=%v", entries, err)
+	}
+}
+
 func TestLocalWebRejectsNativeTaskAndNotepadOverlap(t *testing.T) {
 	taskStarted := make(chan struct{})
 	taskRelease := make(chan struct{})

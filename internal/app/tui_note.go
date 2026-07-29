@@ -118,6 +118,13 @@ func (m *tuiModel) applyNoteState(state localWebNoteSnapshot) tea.Cmd {
 	} else if state.DraftWarning != "" {
 		m.noteErr = "draft: " + state.DraftWarning
 	}
+	if state.RecentWarning != "" {
+		m.noteRecentWarn = state.RecentWarning
+	}
+	if state.Connected && state.ID != m.noteRecentID {
+		m.noteRecentID = state.ID
+		m.refreshNoteRecents(state.Code, state.Pad)
+	}
 	if newSession {
 		m.noteLastID = state.ID
 		m.noteDirty = false
@@ -135,6 +142,95 @@ func (m *tuiModel) applyNoteState(state localWebNoteSnapshot) tea.Cmd {
 	}
 	m.noteEditor.Blur()
 	return nil
+}
+
+func (m *tuiModel) refreshNoteRecents(code, pad string) {
+	if m.note == nil {
+		m.noteRecents = nil
+		m.noteRecent = 0
+		return
+	}
+	entries, err := m.note.RecentNotes()
+	if err != nil {
+		m.noteRecentWarn = err.Error()
+		return
+	}
+	m.noteRecentWarn = ""
+	m.noteRecents = entries
+	if len(entries) == 0 {
+		m.noteRecent = 0
+		return
+	}
+	if m.noteRecent >= len(entries) {
+		m.noteRecent = len(entries) - 1
+	}
+	for index, entry := range entries {
+		if entry.Code == code && entry.Pad == pad {
+			m.noteRecent = index
+			break
+		}
+	}
+}
+
+func (m *tuiModel) currentNoteRecent() (note.RecentEntry, bool) {
+	if len(m.noteRecents) == 0 || m.noteRecent < 0 || m.noteRecent >= len(m.noteRecents) {
+		return note.RecentEntry{}, false
+	}
+	return m.noteRecents[m.noteRecent], true
+}
+
+func (m *tuiModel) adjustNoteRecent(delta int) {
+	if len(m.noteRecents) == 0 {
+		m.refreshNoteRecents("", "")
+	}
+	if len(m.noteRecents) == 0 {
+		return
+	}
+	m.noteRecent = wrapIndex(m.noteRecent+delta, len(m.noteRecents))
+	m.selectNoteRecent()
+}
+
+func (m *tuiModel) selectNoteRecent() {
+	entry, ok := m.currentNoteRecent()
+	if !ok {
+		m.refreshNoteRecents("", "")
+		entry, ok = m.currentNoteRecent()
+	}
+	if !ok {
+		return
+	}
+	m.noteHost = false
+	m.noteCode = entry.Code
+	m.notePad = entry.Pad
+	m.err = ""
+}
+
+func (m *tuiModel) toggleNoteRecentFavorite() {
+	entry, ok := m.currentNoteRecent()
+	if !ok || m.note == nil {
+		return
+	}
+	if err := m.note.SetRecentFavorite(entry.Code, entry.Pad, !entry.Favorite); err != nil {
+		m.noteRecentWarn = err.Error()
+		return
+	}
+	m.refreshNoteRecents(entry.Code, entry.Pad)
+	m.selectNoteRecent()
+}
+
+func (m *tuiModel) removeNoteRecent() {
+	entry, ok := m.currentNoteRecent()
+	if !ok || m.note == nil {
+		return
+	}
+	if err := m.note.ForgetRecent(entry.Code, entry.Pad); err != nil {
+		m.noteRecentWarn = err.Error()
+		return
+	}
+	m.refreshNoteRecents("", "")
+	if len(m.noteRecents) > 0 {
+		m.selectNoteRecent()
+	}
 }
 
 func (m tuiModel) updateNote(message tea.Msg) (tea.Model, tea.Cmd) {

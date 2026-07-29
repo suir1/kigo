@@ -62,6 +62,7 @@ Implemented in this version:
 - `kigo recv <code> --out <dir> --on-conflict overwrite|skip|rename` native receive
 - `kigo text send [text]` and `kigo text recv <code>`
 - `kigo note host`, `kigo note join <code>`, and browser/local-web/TUI views for an asynchronous encrypted notepad that survives disconnected clients and service restarts
+- Recent-notepad catalogs with one-action reopen, favorites, and removal across native CLI, loopback web, TUI, and public browser clients
 - TTY senders print a terminal QR code for the browser share link or native pairing code; `--no-qrcode` disables it
 - Senders generate a six-character code by default or accept a shared custom alphanumeric/mnemonic code through CLI, browser, local web, and TUI
 - Native CLI, browser, local web, and TUI receive paths normalize and validate pairing codes before joining
@@ -195,7 +196,8 @@ arguments or parsing child-process output.
 The Notepad mode can create or open a code and select one pad. As soon as the persistent service is connected it provides a multiline editor,
 publishes changes after 250 ms, and accepts `Ctrl+S` to sync immediately, `Ctrl+L` to clear, and Esc to leave.
 It uses the same in-process note controller as the loopback web console rather than launching an interactive
-child process.
+child process. The Recent row uses Left/Right to choose a local entry, `f` to toggle its favorite state, and `x`
+to remove it.
 
 The TUI remembers its last mode, send path, receive directory, symlink mode, gitignored-file option, conflict
 policy, and Doctor timeout. CLI transfers update those preferences only when explicitly requested:
@@ -227,7 +229,8 @@ passwords are never persisted.
 
 Preferences and saved client endpoints are stored in the platform user-config directory as `kigo/config.json`;
 set `KIGO_CONFIG_PATH` to override the file for portable or isolated runs. Encrypted notepad drafts use the adjacent `kigo/note-drafts/` directory; set
-`KIGO_NOTE_DRAFT_PATH` to override it or pass `--no-note-drafts` to disable persistence.
+`KIGO_NOTE_DRAFT_PATH` to override it or pass `--no-note-drafts` to disable persistence. Native recent-notepad
+metadata uses the adjacent `kigo/note-recents.json`; set `KIGO_NOTE_RECENTS_PATH` to override it.
 
 Installed-client local console:
 
@@ -273,6 +276,9 @@ Native shared notepad:
 ```sh
 kigo note host
 kigo note join <code>
+kigo note recent
+kigo note --pad main favorite <code>
+kigo note --pad main forget <code>
 ```
 
 The notepad is a persistent shared document rather than a one-shot text transfer or two-peer rendezvous.
@@ -282,6 +288,9 @@ Native CLI, browser, loopback web, and TUI clients all support one selected pad 
 the printed `#n=<code>` or `#n=<code>&p=<pad>` link, or use the Notepad tab to create/open, edit, clear, and
 leave. No second client is required. The public service broadcasts concurrent updates and retains an AES-GCM
 encrypted snapshot for 30 days after the latest update by default. Encrypted local drafts persist for seven days.
+Recent catalogs keep at most 20 code/pad entries after successful synchronization. Native code/pad metadata is
+stored in a local `0600` JSON file; the public browser uses origin-local storage. This metadata is plaintext to
+support one-action reopen, but note text is never stored in the recent catalog.
 See `docs/note.md` for storage, conflict, security, and size-limit details.
 
 Transport selection defaults to `--transport auto`:
@@ -681,7 +690,7 @@ Interface-bound doctor, relay, and WebRTC smoke:
 
 The local web smoke script starts signaling plus the tokenized loopback console, validates API authorization, filesystem browsing, and
 asset JavaScript, runs Doctor through the in-process task module, starts a send, verifies its public link, and
-cancels it. It also exercises custom-pad local-Web/native persistent-notepad creation/opening, encrypted draft and service recovery, broadcast updates, clear, ACK,
+cancels it. It also exercises custom-pad local-Web/native persistent-notepad creation/opening, encrypted draft and service recovery, recent-list favorite/removal, broadcast updates, clear, ACK,
 and leave. The TUI smoke uses a Unix PTY to verify the menu, Doctor task, sender
 pairing code/link, path browser, and a custom-pad persistent notepad with bidirectional edits, clear,
 and leave. The relay smoke script builds a temporary `kigo`, starts a password-protected relay on
