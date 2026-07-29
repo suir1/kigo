@@ -95,7 +95,7 @@ Implemented in this version:
 - File manifests include an optional imohash-style `sample_sha256`; peers negotiate deferred full hashing so completed-file checks read at most 1 MiB on each side, while files that actually transfer still receive full SHA-256 verification
 - Native striped senders run one bounded worker per data connection, preserving per-connection envelope order while physical writes proceed concurrently
 - Chunk scheduling favors the path with fewer pending plaintext bytes, so a backlogged connection receives less new work
-- Native send completion flushes every path worker before emitting `stream_end`, and reports per-path bytes, chunk counts, and observed send rate
+- Native send completion flushes every path worker before emitting `stream_end`, and reports per-path bytes, chunk counts, and transport-write rate
 - Native relay transfers automatically reconnect up to three total attempts and resume file data from `.kigopart`
 - Resume negotiation verifies the receiver's partial-file prefix SHA-256 and explicitly agrees on the accepted offset
 - Native receive conflict policies can replace, skip, or rename differing existing files; skip decisions are synchronized through resume negotiation
@@ -157,7 +157,7 @@ Implemented in this version:
 - `route` and `doctor` attach live signaling/relay latency probes to candidates and apply bounded score adjustments
 - `route` and `doctor` reuse one UDP socket across two STUN destinations to classify open, stable, or destination-dependent mappings; native direct and WebRTC scores use the result as a heuristic
 - Multi-connection direct/relay senders persist per-connection EWMA throughput and restore normalized `0.5-2.0` path weights on the next transfer
-- Physical chunk scheduling blends historical weights with current send rate and queue pressure, so stale history decays while slow paths stop accumulating work
+- Physical chunk scheduling blends historical weights with current transport-write rate and queue pressure, so stale history decays while slow paths stop accumulating work
 - `.kigopart` receive path before final rename
 
 ## Run locally
@@ -476,7 +476,7 @@ peers.
 For striped native transfers, successful senders also record aggregate bytes, chunk count, send time, and EWMA
 throughput for each numeric data-connection slot. The next transfer normalizes active slots to weights between
 `0.5` and `2.0`; changing `--connections` recalculates weights using only slots that still exist. During the
-transfer, measured send rate is blended in progressively and queued bytes add an explicit congestion penalty.
+transfer, measured transport-write rate is blended in progressively and queued bytes add an explicit congestion penalty.
 Only numeric slot statistics are persisted; remote addresses and direct candidates are not recorded.
 
 Service health:
@@ -657,7 +657,8 @@ messages retain a stable data connection, while file chunks
 rotate across every negotiated data connection. The receiver writes authenticated chunks by offset, tracks
 covered byte ranges, rejects overlap, and waits for full coverage even if `stream_end` or `done` arrives first.
 Each data connection has a bounded sender worker; the scheduler uses pending bytes as live pressure and favors
-paths that are draining faster. Sender logs report the bytes, chunks, and observed send rate for each active path.
+paths that are draining faster. Sender logs report the bytes, chunks, and transport-write rate for each active path;
+the final transfer rate is emitted only after the receiver acknowledges completion.
 Native direct TCP uses the same negotiated connection count and worker model after rendezvous. WebRTC remains
 single-connection. Use `--connections 1` to disable physical mux.
 

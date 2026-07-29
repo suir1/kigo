@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,66 @@ func TestSendReceiveText(t *testing.T) {
 	}
 	if len(texts) != 1 || texts[0].Text != "hello from test" {
 		t.Fatalf("unexpected texts: %#v", texts)
+	}
+}
+
+func TestSenderFinalProgressWaitsForCompleteAcknowledgement(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var logs []string
+	var logsMu sync.Mutex
+	logf := func(format string, args ...any) {
+		logsMu.Lock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+		logsMu.Unlock()
+	}
+	hasFinalProgress := func() bool {
+		logsMu.Lock()
+		defer logsMu.Unlock()
+		for _, line := range logs {
+			if strings.HasPrefix(line, "sent ") && strings.Contains(line, " 100% ") {
+				return true
+			}
+		}
+		return false
+	}
+
+	sendErr := make(chan error, 1)
+	go func() {
+		sendErr <- SendText(ctx, transport.NewTCPTransport(a), "hello from test", SenderOptions{
+			Code: "ABC123",
+			Logf: logf,
+		})
+	}()
+
+	session, err := NewReceiverTransferSession(ctx, transport.NewTCPTransport(b), "ABC123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		event, err := session.ReceiveEvent(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Kind == EventDone {
+			break
+		}
+	}
+	if hasFinalProgress() {
+		t.Fatal("sender reported final progress before receiver acknowledgement")
+	}
+	if err := session.SendComplete(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-sendErr; err != nil {
+		t.Fatal(err)
+	}
+	if !hasFinalProgress() {
+		t.Fatalf("sender omitted acknowledged final progress: %#v", logs)
 	}
 }
 
@@ -315,6 +376,9 @@ func TestStreamProgressReporterClampsPerStream(t *testing.T) {
 	if p.done != 8 {
 		t.Fatalf("initial done = %d, want 8", p.done)
 	}
+	if p.transferred != 0 {
+		t.Fatalf("initial transferred = %d, want 0", p.transferred)
+	}
 	p.AddStream(0, 10)
 	if p.streams[0].done != 10 {
 		t.Fatalf("stream 0 done = %d, want 10", p.streams[0].done)
@@ -325,6 +389,9 @@ func TestStreamProgressReporterClampsPerStream(t *testing.T) {
 	p.AddStream(1, 7)
 	if p.done != 17 {
 		t.Fatalf("total done after stream 1 add = %d, want 17", p.done)
+	}
+	if p.transferred != 9 {
+		t.Fatalf("transferred = %d, want 9", p.transferred)
 	}
 }
 
@@ -348,6 +415,9 @@ func TestManifestProgressReporterUsesStreamBindings(t *testing.T) {
 	p.AddStream(20, 7)
 	if p.done != 17 {
 		t.Fatalf("done = %d, want 17", p.done)
+	}
+	if p.transferred != 9 {
+		t.Fatalf("transferred = %d, want 9", p.transferred)
 	}
 }
 
