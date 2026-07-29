@@ -13,7 +13,7 @@ import (
 
 func newNoteCommand(g *globalOptions) *cobra.Command {
 	var pad, customCode string
-	var noQRCode bool
+	var noQRCode, recentJSON bool
 	noteCommand := &cobra.Command{
 		Use:   "note",
 		Short: "Share a live encrypted notepad",
@@ -57,9 +57,42 @@ func newNoteCommand(g *globalOptions) *cobra.Command {
 			return runNoteCommand(cmd.Context(), g, code, false, pad, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
+	recent := &cobra.Command{
+		Use:   "recent",
+		Short: "List recently opened notepads",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return listRecentNotes(cmd.OutOrStdout(), recentJSON)
+		},
+	}
+	recent.Flags().BoolVar(&recentJSON, "json", false, "print recent notepads as JSON")
+	favorite := &cobra.Command{
+		Use:   "favorite <code>",
+		Short: "Pin a recent notepad",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return setRecentNoteFavorite(args[0], pad, true)
+		},
+	}
+	unfavorite := &cobra.Command{
+		Use:   "unfavorite <code>",
+		Short: "Unpin a recent notepad",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return setRecentNoteFavorite(args[0], pad, false)
+		},
+	}
+	forget := &cobra.Command{
+		Use:   "forget <code>",
+		Short: "Remove a notepad from local recents",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return forgetRecentNote(args[0], pad)
+		},
+	}
 	host.Flags().BoolVar(&noQRCode, "no-qrcode", false, "do not print a terminal QR code")
 	host.Flags().StringVar(&customCode, "code", "", "custom pairing code; random six-character code when omitted")
-	noteCommand.AddCommand(host, join)
+	noteCommand.AddCommand(host, join, recent, favorite, unfavorite, forget)
 	return noteCommand
 }
 
@@ -94,6 +127,7 @@ func runNoteCommand(
 		}
 	}
 	draftWarning := false
+	recentWarning := false
 	persistDraft := func(document note.Document) {
 		if err := saveNoteDraft(drafts, code, host, document); err != nil && !draftWarning {
 			draftWarning = true
@@ -120,6 +154,12 @@ func runNoteCommand(
 				Input:         input,
 				SyncWorkspace: true,
 				OnChange:      persistDraft,
+				OnReady: func() {
+					if touchErr := noteRecentStore().Touch(code, pad); touchErr != nil && !recentWarning {
+						recentWarning = true
+						fmt.Fprintf(out, "Warning: save recent notepad: %v\n", touchErr)
+					}
+				},
 			})
 			_ = session.Close()
 		}

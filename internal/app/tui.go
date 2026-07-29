@@ -69,6 +69,10 @@ type tuiModel struct {
 	noteVersion    uint64
 	notePublishing uint64
 	noteErr        string
+	noteRecents    []note.RecentEntry
+	noteRecent     int
+	noteRecentID   uint64
+	noteRecentWarn string
 	quitting       bool
 	configWarning  string
 	browser        tuiBrowserState
@@ -142,6 +146,7 @@ func newTUIModelWithConfig(ctx context.Context, g *globalOptions, job *nativeTas
 			break
 		}
 	}
+	model.refreshNoteRecents("", "")
 	return model
 }
 
@@ -274,6 +279,16 @@ func (m tuiModel) updateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setInput("")
 		}
 		return m, nil
+	case "f", "F":
+		if m.mode == tuiModeNote && m.focus == 4 {
+			m.toggleNoteRecentFavorite()
+		}
+		return m, nil
+	case "x", "X":
+		if m.mode == tuiModeNote && m.focus == 4 {
+			m.removeNoteRecent()
+		}
+		return m, nil
 	}
 	if key.Type == tea.KeyRunes && m.isTextFocus() {
 		m.appendInput(string(key.Runes))
@@ -381,7 +396,7 @@ func (m tuiModel) maxFocus() int {
 	case tuiModeDoctor:
 		return 2
 	case tuiModeNote:
-		return 4
+		return 5
 	case tuiModeSend:
 		return 5
 	default:
@@ -506,6 +521,8 @@ func (m *tuiModel) adjustFocusedChoice(delta int) {
 	case tuiModeNote:
 		if m.focus == 1 {
 			m.noteHost = !m.noteHost
+		} else if m.focus == 4 {
+			m.adjustNoteRecent(delta)
 		}
 	}
 	m.err = ""
@@ -530,6 +547,8 @@ func (m *tuiModel) activateFocusedChoice() {
 	case tuiModeNote:
 		if m.focus == 1 {
 			m.noteHost = !m.noteHost
+		} else if m.focus == 4 {
+			m.selectNoteRecent()
 		}
 	}
 	m.err = ""

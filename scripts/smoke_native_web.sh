@@ -1216,7 +1216,27 @@ async function webToWebNote(browser) {
   const later = await newPage(browser, `${baseURL}/#n=${code}&p=Browser+Board`);
   await waitForNoteConnected(later.page);
   await waitForNoteText(later.page, "still available while alone");
+  await later.page.waitForFunction((expectedCode) => {
+    return document.querySelector(".note-recent-code")?.textContent === expectedCode;
+  }, code, { timeout: 10000 });
+  await later.page.locator(".note-recent-row input[type=checkbox]").check();
+  const recentCatalog = await later.page.evaluate(() => localStorage.getItem("kigo-note-recent-v1"));
+  if (!recentCatalog || !recentCatalog.includes(code) || !recentCatalog.includes("Browser Board") ||
+      !recentCatalog.includes('"favorite":true') || recentCatalog.includes("still available while alone")) {
+    throw new Error(`browser recent notepad catalog mismatch: ${recentCatalog}`);
+  }
   await later.page.click("#leaveNote");
+  await later.page.waitForFunction(() => {
+    return document.querySelector("#noteEditor")?.disabled === true &&
+      document.querySelector("[data-note-recent-open]")?.disabled === false;
+  }, null, { timeout: 10000 });
+  await later.page.click("[data-note-recent-open]");
+  await waitForNoteConnected(later.page);
+  await waitForNoteText(later.page, "still available while alone");
+  await later.page.click("#leaveNote");
+  await later.page.waitForFunction(() => document.querySelector("[data-note-recent-open]")?.disabled === false, null, { timeout: 10000 });
+  await later.page.locator(".note-recent-row button", { hasText: "Remove" }).click();
+  await later.page.waitForFunction(() => document.querySelectorAll(".note-recent-row").length === 0);
   if (host.logs.length) throw new Error(`web note host browser logs:\n${host.logs.join("\n")}`);
   if (join.logs.length) throw new Error(`web note join browser logs:\n${join.logs.join("\n")}`);
   if (later.logs.length) throw new Error(`web note later browser logs:\n${later.logs.join("\n")}`);

@@ -36,6 +36,7 @@ type localWebNoteSnapshot struct {
 	Error          string `json:"error,omitempty"`
 	DraftRecovered bool   `json:"draft_recovered,omitempty"`
 	DraftWarning   string `json:"draft_warning,omitempty"`
+	RecentWarning  string `json:"recent_warning,omitempty"`
 	StartedAt      int64  `json:"started_at,omitempty"`
 	FinishedAt     int64  `json:"finished_at,omitempty"`
 }
@@ -66,6 +67,7 @@ type localWebNoteStore struct {
 	reconnectDelay    time.Duration
 	reconnectErr      error
 	drafts            *note.DraftStore
+	recents           *note.RecentStore
 	generateCode      func() (string, error)
 	linkForCode       func(string, string) string
 
@@ -82,6 +84,7 @@ type localWebNoteStore struct {
 
 func newLocalWebNoteStore(parent context.Context, g *globalOptions) *localWebNoteStore {
 	store := newLocalWebNoteStoreWithConnector(parent, g, nil)
+	store.recents = noteRecentStore()
 	if g == nil || !g.NoNoteDrafts {
 		store.drafts = note.NewDraftStore(noteDraftPath())
 	}
@@ -280,6 +283,7 @@ func (s *localWebNoteStore) run(
 			}
 			if err == nil {
 				s.persistDraft(id, workspace.Snapshot(pad))
+				s.touchRecent(id, code, pad)
 			}
 		}
 		if err == nil && !s.setConnected(id, session) {
@@ -316,6 +320,41 @@ func (s *localWebNoteStore) run(
 		case <-timer.C:
 		}
 	}
+}
+
+func (s *localWebNoteStore) touchRecent(id uint64, code, pad string) {
+	if s == nil || s.recents == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.ID != id || !s.state.Running {
+		return
+	}
+	if err := s.recents.Touch(code, pad); err != nil {
+		s.state.RecentWarning = err.Error()
+	}
+}
+
+func (s *localWebNoteStore) RecentNotes() ([]note.RecentEntry, error) {
+	if s == nil || s.recents == nil {
+		return []note.RecentEntry{}, nil
+	}
+	return s.recents.List()
+}
+
+func (s *localWebNoteStore) SetRecentFavorite(code, pad string, favorite bool) error {
+	if s == nil || s.recents == nil {
+		return errors.New("recent notepads are unavailable")
+	}
+	return s.recents.SetFavorite(code, pad, favorite)
+}
+
+func (s *localWebNoteStore) ForgetRecent(code, pad string) error {
+	if s == nil || s.recents == nil {
+		return errors.New("recent notepads are unavailable")
+	}
+	return s.recents.Remove(code, pad)
 }
 
 func (s *localWebNoteStore) receiveSession(

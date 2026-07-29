@@ -262,7 +262,9 @@ def test_notepad(binary: Path, service_url: str) -> None:
     pad = "TUI Sprint Notes"
     output = wait_for(master, "Start sending")
     try:
-        os.write(master, b"\x1b[D\t\tTUI-NOTE-2026\t\x15" + pad.encode() + b"\t\r")
+        os.write(master, b"\x1b[D\t\tTUI-NOTE-2026\t\x15" + pad.encode() + b"\t")
+        output += wait_for(master, "Recent", 5.0)
+        os.write(master, b"\t\r")
         output += wait_for(master, "Pairing code:", 8.0)
         plain = strip_ansi(output)
         match = re.search(r"Pairing code:\s+(TUI-NOTE-2026)", plain)
@@ -336,6 +338,7 @@ def main() -> None:
     config_work = Path(tempfile.mkdtemp(prefix="kigo-tui-config-"))
     CONFIG_ROOT = config_work
     os.environ["KIGO_NOTE_DRAFT_PATH"] = str(config_work / "note-drafts")
+    os.environ["KIGO_NOTE_RECENTS_PATH"] = str(config_work / "note-recents.json")
     os.environ["KIGO_CONFIG_PATH"] = str(config_work / "shared-config.json")
     if not binary.is_file():
         fail(f"Kigo binary not found: {binary}")

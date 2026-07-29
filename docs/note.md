@@ -50,7 +50,34 @@ Inside the native CLI session:
 
 The public and loopback browser editors publish after a 250 ms debounce. Clear publishes an empty revision and
 Leave disconnects only that browser. The TUI uses the same debounce and supports `Ctrl+S` to publish immediately,
-`Ctrl+L` to clear, and Esc to leave.
+`Ctrl+L` to clear, and Esc to leave. Its Recent row uses Left/Right to select an entry, `f` to toggle its favorite
+state, and `x` to remove it from the local list.
+
+## Recent Notepads
+
+A client records a notepad only after it has connected, decrypted the persistent record, and completed workspace
+synchronization. A bad code or failed connection therefore does not pollute the list. Each catalog retains at most
+20 entries, sorts favorites first and then by last-opened time, and contains only the normalized code, pad,
+favorite flag, and timestamp. It never contains note text.
+
+The native CLI, loopback web console, and TUI share `note-recents.json` next to `config.json`. It is written
+atomically with mode `0600`. Set `KIGO_NOTE_RECENTS_PATH` to use another location. Native catalog commands are:
+
+```sh
+kigo note recent
+kigo note recent --json
+kigo note --pad scratch favorite K7M9Q2
+kigo note --pad scratch unfavorite K7M9Q2
+kigo note --pad scratch forget K7M9Q2
+```
+
+The public web app keeps a separate catalog in origin-local `localStorage` under `kigo-note-recent-v1`. Browser
+catalogs do not cross origins, so an IP-based deployment and a later domain have different lists. Clearing browser
+site data removes this list and encrypted browser drafts but does not remove the service snapshot.
+
+Codes and pad names are intentionally plaintext in these local catalogs so an entry can reopen with one action.
+Anyone who can read the native account files or browser profile can see that metadata and reuse a still-valid
+code. Remove sensitive entries after use or avoid the recent-list feature by clearing the catalog.
 
 ## Persistence And Conflicts
 

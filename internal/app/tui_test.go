@@ -136,6 +136,43 @@ func TestTUIFormShowsNotepadAndRejectsInvalidJoinCode(t *testing.T) {
 	}
 }
 
+func TestTUIRecentNotepadsSelectFavoriteAndRemove(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "note-recents.json")
+	t.Setenv("KIGO_NOTE_RECENTS_PATH", path)
+	store := note.NewRecentStore(path)
+	if err := store.Touch("ABC123", "main"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.Touch("PROJECT-ALPHA-2026", "roadmap"); err != nil {
+		t.Fatal(err)
+	}
+
+	model := newTUIModelWithConfig(context.Background(), &globalOptions{}, &nativeTaskStore{}, defaultUserConfig())
+	model.mode = tuiModeNote
+	model.focus = 4
+	if len(model.noteRecents) != 2 || !strings.Contains(model.View(), "PROJECT-ALPHA-2026") {
+		t.Fatalf("recent notepads not loaded: %#v\n%s", model.noteRecents, model.View())
+	}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	model = updated.(tuiModel)
+	if model.noteHost || model.noteCode != "ABC123" || model.notePad != "main" {
+		t.Fatalf("selected recent: host=%t code=%q pad=%q", model.noteHost, model.noteCode, model.notePad)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	model = updated.(tuiModel)
+	entry, ok := model.currentNoteRecent()
+	if !ok || entry.Code != "ABC123" || !entry.Favorite {
+		t.Fatalf("favorited recent = %#v ok=%t", entry, ok)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model = updated.(tuiModel)
+	if len(model.noteRecents) != 1 || model.noteRecents[0].Code != "PROJECT-ALPHA-2026" {
+		t.Fatalf("recents after remove = %#v", model.noteRecents)
+	}
+}
+
 func TestTUINotepadHostEditsSyncsClearsAndLeaves(t *testing.T) {
 	t.Setenv("KIGO_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
 	peer := newFakeLocalWebNotePeer()

@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(mktemp -d)
 BIN=${KIGO_BIN:-"$WORK/kigo"}
 export KIGO_NOTE_DRAFT_PATH="$WORK/note-drafts"
+export KIGO_NOTE_RECENTS_PATH="$WORK/note-recents.json"
 export KIGO_CONFIG_PATH="$WORK/config.json"
 
 find_free_addr() {

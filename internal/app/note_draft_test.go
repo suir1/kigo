@@ -18,3 +18,17 @@ func TestNoteDraftPathUsesConfigDirectoryOrOverride(t *testing.T) {
 		t.Fatalf("overridden note draft path = %q", got)
 	}
 }
+
+func TestNoteRecentsPathUsesConfigDirectoryOrOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("KIGO_CONFIG_PATH", filepath.Join(dir, "portable", "config.json"))
+	t.Setenv("KIGO_NOTE_RECENTS_PATH", "")
+	if got, want := noteRecentsPath(), filepath.Join(dir, "portable", "note-recents.json"); got != want {
+		t.Fatalf("note recents path = %q, want %q", got, want)
+	}
+	override := filepath.Join(dir, "isolated-recents.json")
+	t.Setenv("KIGO_NOTE_RECENTS_PATH", override)
+	if got := noteRecentsPath(); got != override {
+		t.Fatalf("overridden note recents path = %q", got)
+	}
+}

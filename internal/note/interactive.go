@@ -21,6 +21,7 @@ type InteractiveOptions struct {
 	Input         *InteractiveInput
 	SyncWorkspace bool
 	OnChange      func(Document)
+	OnReady       func()
 }
 
 type InteractiveInput struct {
@@ -77,6 +78,9 @@ func RunInteractive(ctx context.Context, session InteractiveSession, opts Intera
 			writeDocument(write, "Recovered", document)
 			notifyDocumentChange(opts.OnChange, document)
 		}
+	}
+	if opts.OnReady != nil {
+		opts.OnReady()
 	}
 	write("Connected. Pad: %s\n", pad)
 	write("Enter a line to publish it. Commands: /show, /clear, /quit\n")

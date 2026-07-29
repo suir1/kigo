@@ -103,20 +103,30 @@ func (m tuiModel) renderForm(width int) string {
 		if !m.noteHost {
 			role = "open code"
 		}
+		recent := "none"
+		if entry, ok := m.currentNoteRecent(); ok {
+			marker := ""
+			if entry.Favorite {
+				marker = "* "
+			}
+			recent = fmt.Sprintf("%d/%d %s%s / %s", m.noteRecent+1, len(m.noteRecents), marker, entry.Code, entry.Pad)
+		}
 		lines = append(lines, m.renderChoice(1, "Role", role, width))
 		if m.noteHost {
 			lines = append(lines,
 				m.renderField(2, "Code", m.noteCode, "random", width),
 				m.renderField(3, "Pad", m.notePad, note.DefaultPad, width),
+				m.renderChoice(4, "Recent", recent, width),
 				"",
-				m.renderButton(4, "Create notepad"),
+				m.renderButton(5, "Create notepad"),
 			)
 		} else {
 			lines = append(lines,
 				m.renderField(2, "Code", m.noteCode, "K7M9Q2", width),
 				m.renderField(3, "Pad", m.notePad, note.DefaultPad, width),
+				m.renderChoice(4, "Recent", recent, width),
 				"",
-				m.renderButton(4, "Open notepad"),
+				m.renderButton(5, "Open notepad"),
 			)
 		}
 	}
@@ -127,7 +137,14 @@ func (m tuiModel) renderForm(width int) string {
 	if m.configWarning != "" {
 		lines = append(lines, "", tuiWarningStyle.Render(truncateTUIText("Preferences: "+m.configWarning, width)))
 	}
-	lines = append(lines, "", tuiMutedStyle.Render("Tab/Up/Down move | Left/Right change | Enter browse/select/start | Esc quit"))
+	if m.noteRecentWarn != "" {
+		lines = append(lines, "", tuiWarningStyle.Render(truncateTUIText("Recent notepads: "+m.noteRecentWarn, width)))
+	}
+	help := "Tab/Up/Down move | Left/Right change | Enter browse/select/start | Esc quit"
+	if m.mode == tuiModeNote {
+		help = "Tab/Up/Down move | Left/Right change | Enter select/start | F favorite | X remove | Esc quit"
+	}
+	lines = append(lines, "", tuiMutedStyle.Render(help))
 	return strings.Join(lines, "\n")
 }
 

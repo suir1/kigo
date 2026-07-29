@@ -10,6 +10,9 @@ const NOTE_PERSISTENT_PROTOCOL_VERSION = 1;
 const NOTE_PERSISTENT_RECORD_VERSION = 1;
 const NOTE_PERSISTENT_KEY_INFO = "kigo-note-store-v1";
 const NOTE_PERSISTENT_RECONNECT_ATTEMPTS = 3;
+const NOTE_RECENT_STORAGE_KEY = "kigo-note-recent-v1";
+const NOTE_RECENT_STORAGE_VERSION = 1;
+const NOTE_RECENT_MAX_ENTRIES = 20;
 
 const noteCodeEl = document.querySelector("#noteCode");
 const notePadEl = document.querySelector("#notePad");
@@ -19,6 +22,7 @@ const hostNoteButton = document.querySelector("#hostNote");
 const joinNoteButton = document.querySelector("#joinNote");
 const clearNoteButton = document.querySelector("#clearNote");
 const leaveNoteButton = document.querySelector("#leaveNote");
+const noteRecentsEl = document.querySelector("#noteRecents");
 
 let noteConnected = false;
 let activeNoteClear = null;
@@ -32,8 +36,12 @@ window.syncNoteControls = function syncNoteControls() {
   noteEditorEl.disabled = !noteConnected;
   clearNoteButton.disabled = !noteConnected;
   leaveNoteButton.disabled = !noteConnected;
+  noteRecentsEl.querySelectorAll("[data-note-recent-open]").forEach((button) => {
+    button.disabled = busy;
+  });
 };
 window.syncNoteControls();
+renderBrowserNoteRecents();
 
 hostNoteButton.addEventListener("click", () => runTask(async (task) => {
   await runBrowserNote("host", noteCodeEl.value, notePadEl.value, task);
@@ -93,6 +101,8 @@ async function runBrowserNote(mode, requestedCode, requestedPad, task) {
       try {
         const connection = await openPersistentBrowserNote(code, pad, task);
         await syncPersistentBrowserNote(connection, workspace, code, pad);
+        touchBrowserNoteRecent(code, pad);
+        renderBrowserNoteRecents();
         log(attempt === 1 ? "Encrypted persistent notepad available." : "Encrypted persistent notepad reconnected.");
         const result = await runPersistentBrowserNoteEditor(connection, workspace, code, pad, task);
         if (result === "leave") return;
@@ -110,6 +120,136 @@ async function runBrowserNote(mode, requestedCode, requestedPad, task) {
     activeNoteClear = null;
     activeNoteLeave = null;
   }
+}
+
+function browserNoteRecentSort(entries) {
+  entries.sort((left, right) => {
+    if (left.favorite !== right.favorite) return left.favorite ? -1 : 1;
+    if (left.last_opened !== right.last_opened) return right.last_opened - left.last_opened;
+    const codeOrder = left.code.localeCompare(right.code);
+    return codeOrder || left.pad.localeCompare(right.pad);
+  });
+  return entries;
+}
+
+function loadBrowserNoteRecents() {
+  try {
+    const raw = localStorage.getItem(NOTE_RECENT_STORAGE_KEY);
+    if (!raw) return [];
+    const stored = JSON.parse(raw);
+    if (stored?.version !== NOTE_RECENT_STORAGE_VERSION || !Array.isArray(stored.entries)) {
+      throw new Error("invalid recent notepad catalog");
+    }
+    if (stored.entries.length > NOTE_RECENT_MAX_ENTRIES) {
+      throw new Error("recent notepad catalog exceeds its item limit");
+    }
+    const seen = new Set();
+    const entries = stored.entries.map((entry) => {
+      const code = normalizeCode(typeof entry?.code === "string" ? entry.code : "");
+      const pad = normalizeNotePad(typeof entry?.pad === "string" ? entry.pad : "");
+      if (!validPairingCode(code)) throw new Error("invalid recent notepad code");
+      validateNotePad(pad);
+      if (!Number.isSafeInteger(entry.last_opened) || entry.last_opened <= 0) {
+        throw new Error("invalid recent notepad timestamp");
+      }
+      const identity = code + "\0" + pad;
+      if (seen.has(identity)) throw new Error("duplicate recent notepad");
+      seen.add(identity);
+      return { code, pad, favorite: entry.favorite === true, last_opened: entry.last_opened };
+    });
+    return browserNoteRecentSort(entries).slice(0, NOTE_RECENT_MAX_ENTRIES);
+  } catch {
+    try { localStorage.removeItem(NOTE_RECENT_STORAGE_KEY); } catch {}
+    return [];
+  }
+}
+
+function saveBrowserNoteRecents(entries) {
+  try {
+    browserNoteRecentSort(entries);
+    localStorage.setItem(NOTE_RECENT_STORAGE_KEY, JSON.stringify({
+      version: NOTE_RECENT_STORAGE_VERSION,
+      entries: entries.slice(0, NOTE_RECENT_MAX_ENTRIES),
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function touchBrowserNoteRecent(code, pad) {
+  code = normalizeCode(code);
+  pad = normalizeNotePad(pad);
+  const entries = loadBrowserNoteRecents();
+  const existing = entries.find((entry) => entry.code === code && entry.pad === pad);
+  const kept = entries.filter((entry) => entry.code !== code || entry.pad !== pad);
+  kept.push({ code, pad, favorite: existing?.favorite === true, last_opened: Date.now() });
+  saveBrowserNoteRecents(kept);
+}
+
+function setBrowserNoteRecentFavorite(code, pad, favorite) {
+  const entries = loadBrowserNoteRecents();
+  const entry = entries.find((candidate) => candidate.code === code && candidate.pad === pad);
+  if (!entry) return;
+  entry.favorite = favorite;
+  saveBrowserNoteRecents(entries);
+}
+
+function removeBrowserNoteRecent(code, pad) {
+  saveBrowserNoteRecents(loadBrowserNoteRecents().filter((entry) => entry.code !== code || entry.pad !== pad));
+}
+
+function renderBrowserNoteRecents() {
+  const entries = loadBrowserNoteRecents();
+  noteRecentsEl.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("span");
+    empty.className = "note-recents-empty";
+    empty.textContent = "No recent notepads.";
+    noteRecentsEl.append(empty);
+    return;
+  }
+  entries.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "note-recent-row";
+    const identity = document.createElement("div");
+    identity.className = "note-recent-identity";
+    const code = document.createElement("strong");
+    code.className = "note-recent-code";
+    code.textContent = entry.code;
+    const pad = document.createElement("span");
+    pad.className = "note-recent-pad";
+    pad.textContent = entry.pad;
+    identity.append(code, pad);
+    const favoriteLabel = document.createElement("label");
+    const favorite = document.createElement("input");
+    favorite.type = "checkbox";
+    favorite.checked = entry.favorite;
+    favorite.addEventListener("change", () => {
+      setBrowserNoteRecentFavorite(entry.code, entry.pad, favorite.checked);
+      renderBrowserNoteRecents();
+    });
+    favoriteLabel.append(favorite, document.createTextNode("Favorite"));
+    const open = document.createElement("button");
+    open.type = "button";
+    open.dataset.noteRecentOpen = "";
+    open.textContent = "Open";
+    open.disabled = busy;
+    open.addEventListener("click", () => {
+      noteCodeEl.value = entry.code;
+      notePadEl.value = entry.pad;
+      runTask(async (task) => runBrowserNote("join", entry.code, entry.pad, task));
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => {
+      removeBrowserNoteRecent(entry.code, entry.pad);
+      renderBrowserNoteRecents();
+    });
+    row.append(identity, favoriteLabel, open, remove);
+    noteRecentsEl.append(row);
+  });
 }
 
 async function openPersistentBrowserNote(code, pad, task) {

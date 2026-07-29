@@ -351,12 +351,19 @@ func TestRunInteractivePublishesAndClears(t *testing.T) {
 	input := strings.NewReader("hello\n/clear\n/quit\n")
 	var output bytes.Buffer
 	done := make(chan error, 1)
+	ready := make(chan struct{})
 	go func() {
 		done <- RunInteractive(ctx, host, InteractiveOptions{
-			In:  input,
-			Out: &output,
+			In:      input,
+			Out:     &output,
+			OnReady: func() { close(ready) },
 		})
 	}()
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		t.Fatal("interactive session did not become ready")
+	}
 	remote, err := join.Recv(ctx)
 	if err != nil {
 		t.Fatal(err)

@@ -76,6 +76,12 @@ type localWebNoteUpdateRequest struct {
 	Text string `json:"text"`
 }
 
+type localWebNoteRecentRequest struct {
+	Code     string `json:"code"`
+	Pad      string `json:"pad"`
+	Favorite bool   `json:"favorite"`
+}
+
 func newLocalWebCommand(g *globalOptions) *cobra.Command {
 	var listen string
 	var noOpen bool
@@ -177,6 +183,9 @@ func (s *localWebServer) handler() http.Handler {
 	mux.HandleFunc("/api/note/update", s.auth(s.handleNoteUpdate))
 	mux.HandleFunc("/api/note/clear", s.auth(s.handleNoteClear))
 	mux.HandleFunc("/api/note/leave", s.auth(s.handleNoteLeave))
+	mux.HandleFunc("/api/note/recents", s.auth(s.handleNoteRecents))
+	mux.HandleFunc("/api/note/recents/favorite", s.auth(s.handleNoteRecentFavorite))
+	mux.HandleFunc("/api/note/recents/forget", s.auth(s.handleNoteRecentForget))
 	return securityHeaders(mux)
 }
 
@@ -577,6 +586,85 @@ func (s *localWebServer) handleNoteLeave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeLocalWebJSON(w, http.StatusOK, s.note.Leave())
+}
+
+func (s *localWebServer) handleNoteRecents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.note == nil {
+		writeLocalWebError(w, http.StatusServiceUnavailable, "local notepad is unavailable")
+		return
+	}
+	entries, err := s.note.RecentNotes()
+	if err != nil {
+		writeLocalWebError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeLocalWebJSON(w, http.StatusOK, entries)
+}
+
+func (s *localWebServer) handleNoteRecentFavorite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	request, ok := s.decodeNoteRecentRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := s.note.SetRecentFavorite(request.Code, request.Pad, request.Favorite); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, note.ErrRecentNotFound) {
+			status = http.StatusNotFound
+		}
+		writeLocalWebError(w, status, err.Error())
+		return
+	}
+	writeLocalWebJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *localWebServer) handleNoteRecentForget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	request, ok := s.decodeNoteRecentRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := s.note.ForgetRecent(request.Code, request.Pad); err != nil {
+		writeLocalWebError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeLocalWebJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *localWebServer) decodeNoteRecentRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (localWebNoteRecentRequest, bool) {
+	if s.note == nil {
+		writeLocalWebError(w, http.StatusServiceUnavailable, "local notepad is unavailable")
+		return localWebNoteRecentRequest{}, false
+	}
+	var request localWebNoteRecentRequest
+	if err := decodeLocalWebJSON(w, r, &request); err != nil {
+		return localWebNoteRecentRequest{}, false
+	}
+	code, err := secure.ValidateCode(request.Code)
+	if err != nil {
+		writeLocalWebError(w, http.StatusBadRequest, err.Error())
+		return localWebNoteRecentRequest{}, false
+	}
+	request.Code = code
+	request.Pad = note.NormalizePad(request.Pad)
+	if err := note.ValidatePad(request.Pad); err != nil {
+		writeLocalWebError(w, http.StatusBadRequest, err.Error())
+		return localWebNoteRecentRequest{}, false
+	}
+	return request, true
 }
 
 func (s *localWebServer) startJob(w http.ResponseWriter, request nativeTaskRequest) {

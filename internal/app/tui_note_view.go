@@ -31,6 +31,9 @@ func (m tuiModel) renderNote(width int) string {
 	if m.noteErr != "" {
 		lines = append(lines, "", tuiErrorStyle.Render(truncateTUIText("Error: "+m.noteErr, width)))
 	}
+	if m.noteRecentWarn != "" {
+		lines = append(lines, "", tuiWarningStyle.Render(truncateTUIText("Recent notepads: "+m.noteRecentWarn, width)))
+	}
 	lines = append(lines, "")
 	switch {
 	case state.Connected:
