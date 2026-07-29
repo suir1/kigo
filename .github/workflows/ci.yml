@@ -235,7 +235,8 @@ jobs:
       - name: Build smoke binary
         run: go build -trimpath -o "$RUNNER_TEMP/kigo" ./cmd/kigo
 
-      - name: Configure browser ICE
+      - name: Configure Firefox ICE
+        if: matrix.browser == 'firefox'
         run: |
           echo "KIGO_TURN_LISTEN=0.0.0.0:0" >> "$GITHUB_ENV"
           echo "KIGO_TURN_PUBLIC_IP=$(hostname -I | awk '{print $1}')" >> "$GITHUB_ENV"
