@@ -375,12 +375,24 @@ async function newPage(context, target = baseURL, options = {}) {
   const automaticDownload = options.watchDownload
     ? page.waitForEvent("download", { timeout: options.downloadTimeout || 30000 }).catch(() => null)
     : null;
-  await page.goto(target);
+  await page.goto(target, { waitUntil: "domcontentloaded" });
   const done = options.waitForCompletion
     ? waitForTransferComplete(page, options.completionTimeout || 30000)
     : null;
   if (done) done.catch(() => {});
   return { ...tracked, automaticDownload, done };
+}
+
+async function secondaryWebPeer(primaryContext) {
+  if (browserName !== "firefox") {
+    return { context: primaryContext, close: async () => {} };
+  }
+  const peerBrowser = await firefox.launch({
+    headless: true,
+    firefoxUserPrefs: { "media.peerconnection.ice.loopback": true },
+  });
+  const context = await peerBrowser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: ignoreTLSErrors });
+  return { context, close: () => closeSmokeBrowser(peerBrowser) };
 }
 
 async function extractCode(page) {
@@ -864,26 +876,31 @@ async function webToWebText(browser) {
   console.log("start web->web text");
   const payload = `web to web text payload ${Date.now()}`;
   const code = randomPairingCode();
-  const receiver = await startWebReceiver(browser, code);
+  const peer = await secondaryWebPeer(browser);
+  try {
+    const receiver = await startWebReceiver(peer.context, code, "", { completionTimeout: 60000 });
 
-  const sender = await newPage(browser);
-  await sender.page.evaluate((fixedCode) => { window.generateCode = () => fixedCode; }, code);
-  await sender.page.click('button[data-tab="text"]');
-  await sender.page.fill("#textInput", payload);
-  await sender.page.click("#sendText");
-  await waitForTransferComplete(sender.page);
-  await receiver.done;
+    const sender = await newPage(browser);
+    await sender.page.evaluate((fixedCode) => { window.generateCode = () => fixedCode; }, code);
+    await sender.page.click('button[data-tab="text"]');
+    await sender.page.fill("#textInput", payload);
+    await sender.page.click("#sendText");
+    await waitForTransferComplete(sender.page, 60000);
+    await receiver.done;
 
-  const received = await receiver.page.locator("#textOutput").textContent();
-  assertEqual(received, payload, "web->web text mismatch");
-  const senderLog = await sender.page.locator("#log").textContent();
-  const receiverLog = await receiver.page.locator("#log").textContent();
-  if (senderLog.includes("Parallel WebRTC:") || receiverLog.includes("Parallel WebRTC:")) {
-    throw new Error(`default web-web text unexpectedly enabled parallel data paths\nsender=${senderLog}\nreceiver=${receiverLog}`);
+    const received = await receiver.page.locator("#textOutput").textContent();
+    assertEqual(received, payload, "web->web text mismatch");
+    const senderLog = await sender.page.locator("#log").textContent();
+    const receiverLog = await receiver.page.locator("#log").textContent();
+    if (senderLog.includes("Parallel WebRTC:") || receiverLog.includes("Parallel WebRTC:")) {
+      throw new Error(`default web-web text unexpectedly enabled parallel data paths\nsender=${senderLog}\nreceiver=${receiverLog}`);
+    }
+    if (sender.logs.length) throw new Error(`web-web text sender browser logs:\n${sender.logs.join("\n")}`);
+    if (receiver.logs.length) throw new Error(`web-web text receiver browser logs:\n${receiver.logs.join("\n")}`);
+    console.log("ok web->web text");
+  } finally {
+    await peer.close();
   }
-  if (sender.logs.length) throw new Error(`web-web text sender browser logs:\n${sender.logs.join("\n")}`);
-  if (receiver.logs.length) throw new Error(`web-web text receiver browser logs:\n${receiver.logs.join("\n")}`);
-  console.log("ok web->web text");
 }
 
 async function webToWebParallelLaneFallback(browser) {
@@ -1851,7 +1868,7 @@ async function webFolderToNative(browser) {
   const launchOptions = { headless: true };
   if (browserName === "chromium") {
     launchOptions.args = ["--disable-breakpad", "--disable-crash-reporter", ...browserArgs];
-  } else if (browserName === "firefox" && process.platform === "linux") {
+  } else if (browserName === "firefox") {
     launchOptions.firefoxUserPrefs = { "media.peerconnection.ice.loopback": true };
   }
   if (channel) launchOptions.channel = channel;
@@ -1868,7 +1885,7 @@ async function webFolderToNative(browser) {
     await runSmoke(browser, "web->native skip file", 45000, webToNativeSkipFile);
     await runSmoke(browser, "web->native text", 45000, webToNativeText);
     await runSmoke(browser, "web->web file", 45000, webToWebFile);
-    await runSmoke(browser, "web->web text", 45000, webToWebText);
+    await runSmoke(browser, "web->web text", 75000, webToWebText);
     await runSmoke(browser, "web->web parallel lane fallback", 45000, webToWebParallelLaneFallback);
     await runSmoke(browser, "web->web unordered reorder", 45000, webToWebUnorderedReorder);
     await runSmoke(browser, "web->web direct failure fallback", 30000, webToWebFallback);

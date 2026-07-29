@@ -25,6 +25,7 @@ PAYLOAD_BYTES=${KIGO_PUBLIC_PAYLOAD_BYTES:-1048576}
 TIMEOUT_SECONDS=${KIGO_PUBLIC_TIMEOUT_SECONDS:-90}
 EXPECTED_ROUTE=${KIGO_PUBLIC_EXPECT_ROUTE:-any}
 TRANSPORT=${KIGO_PUBLIC_TRANSPORT:-auto}
+PAIRING_CODE=${KIGO_PUBLIC_CODE:-}
 DIRECT_TIMEOUT=${KIGO_PUBLIC_DIRECT_TIMEOUT:-2s}
 UDP_PROBE=${KIGO_PUBLIC_UDP_PROBE:-0}
 ARTIFACT_DIR=${KIGO_ARTIFACT_DIR:-"$ROOT/artifacts/public-matrix"}
@@ -94,6 +95,10 @@ if [[ $validation_status -ne 0 ]]; then
 fi
 if [[ "$TRANSPORT" != "auto" && "$TRANSPORT" != "native" && "$TRANSPORT" != "webrtc" ]]; then
   echo "KIGO_PUBLIC_TRANSPORT must be auto, native, or webrtc" >&2
+  exit 2
+fi
+if [[ -n "$PAIRING_CODE" && ! "$PAIRING_CODE" =~ ^[A-Za-z0-9-]{6,64}$ ]]; then
+  echo "KIGO_PUBLIC_CODE must be a 6-64 character pairing code" >&2
   exit 2
 fi
 if [[ "$UDP_PROBE" != "0" && "$UDP_PROBE" != "1" ]]; then
@@ -296,6 +301,9 @@ sender_args=(
   --route-history "$SENDER_DIR/route-history.json"
   send "$SOURCE"
 )
+if [[ -n "$PAIRING_CODE" ]]; then
+  sender_args+=(--code "$PAIRING_CODE")
+fi
 receiver_base_args=(
   "$REMOTE_BIN"
   "${common_args[@]}"
