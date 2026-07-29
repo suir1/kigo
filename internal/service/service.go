@@ -69,6 +69,7 @@ type Config struct {
 	RoomTTL                   time.Duration
 	NoteStore                 string
 	NoteTTL                   time.Duration
+	NoteUpdatesPerMinute      int
 	SignalRequestsPerMinute   int
 	TrustedProxies            string
 }
@@ -81,6 +82,7 @@ type Server struct {
 	directs        *rendezvousRegistry[directCapability, directResponse]
 	signalLimits   map[string][]time.Time
 	iceLimits      map[string][]time.Time
+	noteLimits     map[string][]time.Time
 	turnServer     *turn.Server
 	turnQuota      *turnAllocationQuota
 	notes          map[string]*persistentNoteHub
@@ -131,6 +133,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.NoteTTL == 0 {
 		cfg.NoteTTL = defaultPersistentNoteTTL
+	}
+	if cfg.NoteUpdatesPerMinute == 0 {
+		cfg.NoteUpdatesPerMinute = defaultPersistentNoteUpdatesPerMinute
 	}
 	if cfg.SignalRequestsPerMinute == 0 {
 		cfg.SignalRequestsPerMinute = 60
@@ -183,6 +188,7 @@ func New(cfg Config) *Server {
 		directs:        newDirectRegistry(),
 		signalLimits:   map[string][]time.Time{},
 		iceLimits:      map[string][]time.Time{},
+		noteLimits:     map[string][]time.Time{},
 		notes:          map[string]*persistentNoteHub{},
 		trustedProxies: trustedProxies,
 	}
@@ -556,6 +562,10 @@ func (s *Server) allowICE(remote string) bool {
 
 func (s *Server) allowICERequest(r *http.Request) bool {
 	return s.allowICE(s.clientAddress(r))
+}
+
+func (s *Server) allowNoteUpdate(remote string) bool {
+	return s.allowRate(s.noteLimits, remote, s.cfg.NoteUpdatesPerMinute)
 }
 
 func (s *Server) allowRate(limits map[string][]time.Time, remote string, maximum int) bool {
@@ -948,7 +958,7 @@ func (s *Server) cleanup() {
 
 func (s *Server) cleanupRateLimitsLocked(now time.Time) {
 	windowStart := now.Add(-time.Minute)
-	for _, limits := range []map[string][]time.Time{s.signalLimits, s.iceLimits} {
+	for _, limits := range []map[string][]time.Time{s.signalLimits, s.iceLimits, s.noteLimits} {
 		for host, events := range limits {
 			keep := recentRateEvents(events, windowStart)
 			if len(keep) == 0 {

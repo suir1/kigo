@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -50,14 +51,15 @@ type ReconnectState struct {
 }
 
 type DataChannelTransport struct {
-	pc     *webrtc.PeerConnection
-	dc     dataChannel
-	ws     *websocket.Conn
-	recv   chan []byte
-	opened chan struct{}
-	closed chan struct{}
-	low    chan struct{}
-	waitNS atomic.Int64
+	pc        *webrtc.PeerConnection
+	dc        dataChannel
+	ws        *websocket.Conn
+	recv      chan []byte
+	opened    chan struct{}
+	closed    chan struct{}
+	low       chan struct{}
+	waitNS    atomic.Int64
+	closeOnce sync.Once
 }
 
 type dataChannel interface {
@@ -70,6 +72,7 @@ const (
 	dataChannelBufferedHigh = 4 * 1024 * 1024
 	dataChannelBufferedLow  = 1 * 1024 * 1024
 	dataChannelDrainTimeout = time.Second
+	signalWriteWait         = 10 * time.Second
 	signalReconnectProtocol = "kigo-reconnect-v1"
 )
 
@@ -110,7 +113,9 @@ func DialSender(ctx context.Context, opts Options) (transport.Transport, error) 
 			return
 		}
 		init := candidate.ToJSON()
-		_ = sig.write(Signal{Type: "candidate", Candidate: &init})
+		if err := sig.write(Signal{Type: "candidate", Candidate: &init}); err != nil {
+			sig.fail(fmt.Errorf("send ICE candidate: %w", err))
+		}
 	})
 	dc, err := pc.CreateDataChannel("kigo", nil)
 	if err != nil {
@@ -178,7 +183,9 @@ func DialReceiver(ctx context.Context, opts Options) (transport.Transport, error
 			return
 		}
 		init := candidate.ToJSON()
-		_ = sig.write(Signal{Type: "candidate", Candidate: &init})
+		if err := sig.write(Signal{Type: "candidate", Candidate: &init}); err != nil {
+			sig.fail(fmt.Errorf("send ICE candidate: %w", err))
+		}
 	})
 	var t *DataChannelTransport
 	gotDC := make(chan struct{})
@@ -259,12 +266,12 @@ func wrap(pc *webrtc.PeerConnection, dc *webrtc.DataChannel, ws *websocket.Conn)
 		close(t.opened)
 	})
 	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		t.recv <- append([]byte(nil), msg.Data...)
+		select {
+		case t.recv <- append([]byte(nil), msg.Data...):
+		case <-t.closed:
+		}
 	})
-	dc.OnClose(func() {
-		close(t.closed)
-		close(t.recv)
-	})
+	dc.OnClose(t.markClosed)
 	return t
 }
 
@@ -329,6 +336,8 @@ func (t *DataChannelTransport) Recv(ctx context.Context) ([]byte, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-t.closed:
+		return nil, transport.ErrClosed
 	case payload, ok := <-t.recv:
 		if !ok {
 			return nil, transport.ErrClosed
@@ -338,6 +347,7 @@ func (t *DataChannelTransport) Recv(ctx context.Context) ([]byte, error) {
 }
 
 func (t *DataChannelTransport) Close() error {
+	t.markClosed()
 	if t.ws != nil {
 		_ = t.ws.Close()
 	}
@@ -351,6 +361,13 @@ func (t *DataChannelTransport) Close() error {
 	return nil
 }
 
+func (t *DataChannelTransport) markClosed() {
+	if t == nil {
+		return
+	}
+	t.closeOnce.Do(func() { close(t.closed) })
+}
+
 func (t *DataChannelTransport) waitDrain(timeout time.Duration) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
@@ -358,8 +375,6 @@ func (t *DataChannelTransport) waitDrain(timeout time.Duration) {
 	defer ticker.Stop()
 	for t.dc.BufferedAmount() > 0 {
 		select {
-		case <-t.closed:
-			return
 		case <-deadline.C:
 			return
 		case <-ticker.C:
@@ -398,7 +413,10 @@ func (s *signaler) readLoop(candidates *remoteCandidateBuffer, reconnect *Reconn
 			continue
 		}
 		if sig.Type == "candidate" && sig.Candidate != nil {
-			_ = candidates.add(*sig.Candidate)
+			if err := candidates.add(*sig.Candidate); err != nil {
+				s.fail(fmt.Errorf("add ICE candidate: %w", err))
+				return
+			}
 			continue
 		}
 		select {
@@ -411,7 +429,18 @@ func (s *signaler) readLoop(candidates *remoteCandidateBuffer, reconnect *Reconn
 func (s *signaler) write(sig Signal) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	_ = s.ws.SetWriteDeadline(time.Now().Add(signalWriteWait))
 	return s.ws.WriteJSON(sig)
+}
+
+func (s *signaler) fail(err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case s.errs <- err:
+	default:
+	}
 }
 
 func (s *signaler) wait(ctx context.Context, typ string) (Signal, error) {
