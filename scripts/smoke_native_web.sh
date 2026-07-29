@@ -1851,6 +1851,8 @@ async function webFolderToNative(browser) {
   const launchOptions = { headless: true };
   if (browserName === "chromium") {
     launchOptions.args = ["--disable-breakpad", "--disable-crash-reporter", ...browserArgs];
+  } else if (browserName === "firefox" && process.platform === "linux") {
+    launchOptions.firefoxUserPrefs = { "media.peerconnection.ice.loopback": true };
   }
   if (channel) launchOptions.channel = channel;
   const browser = await browserType.launch(launchOptions);
