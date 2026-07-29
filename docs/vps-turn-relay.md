@@ -75,11 +75,11 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running [`v0.1.0-alpha.3`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.3),
+The VPS is running [`v0.1.0-alpha.4`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.4),
 deployed on 2026-07-29 from merge commit
-`515db4c7f848bf04300c3fddf15dd7d23f3ccd3e`. `kigo version --json` reports
-Go 1.23.1 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`07fe73fbbac8ca3fe1ec7402b955a4d09cd536f77cf79917ffd856f5f8f56560`.
+`12cf5269543da5471cf8e01a94274b872beae940`. `kigo version --json` reports
+Go 1.26.5 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
+`ae5dbd9c4de86944448fd93b3131970f9d187b928bb0bf087d0ef884606c3663`.
 The no-version installer selects this same release and verifies its published
 archive checksum before installation.
 
@@ -89,16 +89,38 @@ The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
 files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
 retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-The immediately previous `v0.1.0-dev.20260729.health1` binary is retained at
-`/usr/local/bin/kigo.backup-20260729-074941-health1`. To roll back both public
+The immediately previous `v0.1.0-alpha.3` binary is retained at
+`/usr/local/bin/kigo.backup-20260729-084644-alpha3`. To roll back both public
 services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260729-074941-health1 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260729-084644-alpha3 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
 ## Verification
+
+The `v0.1.0-alpha.4` deployment passed these checks on 2026-07-29:
+
+- Go was updated from 1.23.1 to 1.26.5, `golang.org/x/net` to v0.57.0,
+  `golang.org/x/crypto` to v0.54.0, the Docker builder to Go 1.26.5, and the
+  runtime image to Alpine 3.24. Source and unstripped candidate-binary
+  `govulncheck` scans reported zero reachable vulnerabilities.
+- Pull request 19 passed all eight CI jobs. The release workflow repeated the
+  vulnerability gate, Windows direct tests, source tests, five-platform build,
+  archive verification, SBOM generation, and both attestations.
+- Strict-TLS Chromium text and random 256 KiB file scenarios passed over forced
+  `relay/relay` UDP TURN and natural direct `srflx/srflx` UDP. Checksums matched
+  in all four scenarios.
+- A native-native random 1 MiB transfer disabled direct TCP and LAN discovery,
+  negotiated `service-native-relay` with temporary credentials, and used four
+  striped connections through `106.53.170.243:5140`. Source and destination
+  both had SHA-256
+  `6f28453d027ce26e9b55acb10b6162099a80014e63e512d4a548ec41057f7846`.
+- The acknowledged end-to-end rate was 225 KB/s at the sender and 231 KB/s at
+  the receiver. Both services were active with zero restarts and no warning
+  journal entries. Health reported no active TURN allocations, dropped bytes,
+  or quota failures.
 
 The `v0.1.0-alpha.3` deployment passed these checks on 2026-07-29:
 
