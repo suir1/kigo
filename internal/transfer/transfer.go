@@ -186,11 +186,14 @@ func (p *PreparedPath) Send(ctx context.Context, t transport.Transport, opts Sen
 		return err
 	}
 	logCompressionStats(session, opts.Logf)
-	progress.Log("all items", true)
 	if err := session.SendDone(ctx); err != nil {
 		return err
 	}
-	return session.WaitComplete(ctx)
+	if err := session.WaitComplete(ctx); err != nil {
+		return err
+	}
+	progress.Log("all items", true)
+	return nil
 }
 
 func (p *PreparedPath) hasResumableFiles() bool {
@@ -646,7 +649,7 @@ func logChunkPathStats(stats []chunkPathStats, logf Logger) {
 			rate /= stat.SendTime.Seconds()
 		}
 		logf(
-			"path %d sent %s in %d chunk(s), %s/s",
+			"path %d sent %s in %d chunk(s), transport write %s/s",
 			stat.Connection,
 			formatBytes(stat.Bytes),
 			stat.Chunks,
@@ -727,7 +730,11 @@ func SendText(ctx context.Context, t transport.Transport, text string, opts Send
 	if opts.Logf != nil {
 		opts.Logf("sent done")
 	}
-	return session.WaitComplete(ctx)
+	if err := session.WaitComplete(ctx); err != nil {
+		return err
+	}
+	progress.Log("all items", true)
+	return nil
 }
 
 func Receive(ctx context.Context, t transport.Transport, opts ReceiverOptions) ([]ReceivedText, error) {
@@ -855,13 +862,14 @@ func logCompressionStats(session *TransferSession, logf Logger) {
 }
 
 type progressReporter struct {
-	label   string
-	total   int64
-	done    int64
-	started time.Time
-	lastLog time.Time
-	logf    Logger
-	streams map[int]*progressStream
+	label       string
+	total       int64
+	done        int64
+	transferred int64
+	started     time.Time
+	lastLog     time.Time
+	logf        Logger
+	streams     map[int]*progressStream
 }
 
 type progressStream struct {
@@ -922,7 +930,11 @@ func (p *progressReporter) Add(delta int64, item string) {
 	if p == nil {
 		return
 	}
+	before := p.done
 	p.done = clampInt64(p.done+delta, 0, p.total)
+	if p.done > before {
+		p.transferred += p.done - before
+	}
 	p.Log(item, false)
 }
 
@@ -937,7 +949,11 @@ func (p *progressReporter) AddStream(streamID int, delta int64) {
 	}
 	before := stream.done
 	stream.done = clampInt64(stream.done+delta, 0, stream.size)
-	p.done = clampInt64(p.done+(stream.done-before), 0, p.total)
+	advanced := stream.done - before
+	p.done = clampInt64(p.done+advanced, 0, p.total)
+	if advanced > 0 {
+		p.transferred += advanced
+	}
 	p.Log(stream.name, false)
 }
 
@@ -946,8 +962,10 @@ func (p *progressReporter) Log(item string, force bool) {
 		return
 	}
 	now := time.Now()
-	if !force && p.done < p.total && now.Sub(p.lastLog) < progressLogInterval {
-		return
+	if !force {
+		if p.done >= p.total || now.Sub(p.lastLog) < progressLogInterval {
+			return
+		}
 	}
 	p.lastLog = now
 	percent := 100
@@ -958,7 +976,7 @@ func (p *progressReporter) Log(item string, force bool) {
 	if elapsed <= 0 {
 		elapsed = 0.001
 	}
-	rate := float64(p.done) / elapsed
+	rate := float64(p.transferred) / elapsed
 	if item == "" {
 		p.logf("%s %s/%s %d%% %s/s", p.label, formatBytes(p.done), formatBytes(p.total), percent, formatBytesFloat(rate))
 		return
