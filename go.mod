@@ -1,6 +1,6 @@
 module github.com/suir1/kigo
 
-go 1.23.1
+go 1.26.5
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
@@ -14,9 +14,9 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.1
-	golang.org/x/crypto v0.40.0
-	golang.org/x/net v0.41.0
-	golang.org/x/sys v0.34.0
+	golang.org/x/crypto v0.54.0
+	golang.org/x/net v0.57.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -52,6 +52,6 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

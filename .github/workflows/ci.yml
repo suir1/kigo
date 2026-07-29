@@ -53,6 +53,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Scan vulnerabilities
+        run: ./scripts/check_vulnerabilities.sh ./...
+
       - name: Check scripts and browser JavaScript
         run: |
           bash -n scripts/*.sh
