@@ -198,6 +198,50 @@ jobs:
           PLAYWRIGHT_CHROMIUM_CHANNEL: ""
         run: ./scripts/smoke_native_web.sh
 
+  browser-compat-smoke:
+    name: ${{ matrix.browser }} WebRTC compatibility
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - firefox
+          - webkit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Build smoke binary
+        run: go build -trimpath -o "$RUNNER_TEMP/kigo" ./cmd/kigo
+
+      - name: Run browser compatibility smoke
+        env:
+          KIGO_BIN: ${{ runner.temp }}/kigo
+          KIGO_SMOKE_DISABLE_PARALLEL: "1"
+          KIGO_SMOKE_FILTER: web->web file,web->web text,web->web note
+          PLAYWRIGHT_BROWSER: ${{ matrix.browser }}
+          PLAYWRIGHT_CHANNEL: ""
+        run: ./scripts/smoke_native_web.sh
+
   container:
     name: Container build
     needs: verify

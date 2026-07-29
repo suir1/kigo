@@ -50,13 +50,19 @@ type ReconnectState struct {
 
 type DataChannelTransport struct {
 	pc     *webrtc.PeerConnection
-	dc     *webrtc.DataChannel
+	dc     dataChannel
 	ws     *websocket.Conn
 	recv   chan []byte
 	opened chan struct{}
 	closed chan struct{}
 	low    chan struct{}
 	waitNS atomic.Int64
+}
+
+type dataChannel interface {
+	Send([]byte) error
+	Close() error
+	BufferedAmount() uint64
 }
 
 const (

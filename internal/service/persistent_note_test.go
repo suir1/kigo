@@ -176,6 +176,33 @@ func TestPersistentNoteRejectsInvalidIdentity(t *testing.T) {
 	}
 }
 
+func TestPersistentNoteQuarantinesCorruptSnapshots(t *testing.T) {
+	store := t.TempDir()
+	s := New(Config{NoteStore: store, NoteTTL: time.Hour, SignalRequestsPerMinute: -1})
+
+	loadPath := s.persistentNotePath("corrupt-on-load")
+	loadPayload := []byte(`{"version":`)
+	if err := os.WriteFile(loadPath, loadPayload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.loadPersistentNote("corrupt-on-load", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != nil {
+		t.Fatalf("corrupt snapshot loaded as %#v", loaded)
+	}
+	assertPersistentNoteQuarantined(t, loadPath, loadPayload)
+
+	cleanupPath := filepath.Join(store, strings.Repeat("a", 64)+".json")
+	cleanupPayload := []byte(`{}`)
+	if err := os.WriteFile(cleanupPath, cleanupPayload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.cleanupPersistentNoteFiles(time.Now())
+	assertPersistentNoteQuarantined(t, cleanupPath, cleanupPayload)
+}
+
 func persistentNoteTestURL(base, token, padToken string) string {
 	return "ws" + strings.TrimPrefix(base, "http") + "/api/note-sync/" + token + "/" + padToken
 }
@@ -234,5 +261,26 @@ func assertPersistentNoteStoreEncrypted(t *testing.T, store string, forbidden ..
 		if value != "" && (strings.Contains(entries[0].Name(), value) || strings.Contains(string(payload), value)) {
 			t.Fatalf("persistent note storage leaked plaintext %q", value)
 		}
+	}
+}
+
+func assertPersistentNoteQuarantined(t *testing.T, original string, want []byte) {
+	t.Helper()
+	if _, err := os.Stat(original); !os.IsNotExist(err) {
+		t.Fatalf("corrupt snapshot still exists at %s: %v", original, err)
+	}
+	matches, err := filepath.Glob(original + ".corrupt-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("quarantined snapshots = %#v", matches)
+	}
+	payload, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != string(want) {
+		t.Fatalf("quarantined payload = %q, want %q", payload, want)
 	}
 }
