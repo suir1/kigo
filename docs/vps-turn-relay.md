@@ -75,12 +75,13 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running the GitHub prerelease
-[`v0.1.0-alpha.2`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.2),
-deployed on 2026-07-28 from commit
-`0189594821aa7d196e773be9b1e35a78fb19966e`. `kigo version --json` reports Go
-1.23.1, Linux amd64, and the same commit. The deployed `/usr/local/bin/kigo`
-SHA-256 is `4d7c1b79dbd82939461064c13e2f890c760d3cebc1c93eb130e2c8d7a31fc449`.
+The VPS is running `v0.1.0-dev.20260729.health1`, deployed on 2026-07-29 from
+merge commit `1501a537bc374cee450c55b136d148f6fd5241b6`. `kigo version --json`
+reports Go 1.25.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256
+is `1f93d6478b8320ddf38eadbe295f7511e4c356b1dd8d279976d44509929db53e`.
+This server build is newer than the published client prerelease; the
+no-version installer continues to select
+[`v0.1.0-alpha.2`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.2).
 
 Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
 service uses `KIGO_NOTE_STORE=/var/lib/kigo/notes` and `KIGO_NOTE_TTL=720h`.
@@ -88,18 +89,40 @@ The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
 files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
 retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-The previous persistent-notepad development binary is retained at
-`/usr/local/bin/kigo.backup-20260728-112358-pre-alpha2`. To roll back both
-public services while preserving encrypted snapshots:
+The previous `v0.1.0-alpha.2` binary is retained at
+`/usr/local/bin/kigo.backup-20260729-143607-alpha2`. To roll back both public
+services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260728-112358-pre-alpha2 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260729-143607-alpha2 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
 ## Verification
 
-The persistent-notepad deployment passed these public checks on 2026-07-28:
+The `health1` deployment passed these checks on 2026-07-29:
+
+- Pull request 15 passed all eight required and supporting jobs, including Go
+  race tests, Linux and Windows smoke tests, Chromium, Firefox, WebKit,
+  container validation, and release artifact verification.
+- Strict-TLS Chromium text and random 256 KiB file scenarios passed over both
+  forced `relay/relay` UDP TURN and natural direct `srflx/srflx` UDP. File
+  checksums matched in both runs.
+- A native-native random 1 MiB transfer disabled direct TCP and LAN discovery,
+  negotiated the service relay with temporary credentials, used four striped
+  connections through `106.53.170.243:5140`, and matched SHA-256
+  `ba486b2d5f4edc8144297eb7ccdec57f21c7bf5009d4ce6b449d5c03f36c9282`.
+- A native Notepad wrote revision 1, then reopened with an equal encrypted local
+  draft. The server snapshot remained at generation 1 with an unchanged expiry.
+  After restarting `kigo-public.service`, a fresh client recovered the same
+  revision and plaintext.
+- Both services remained active with zero restarts and no warning-level journal
+  entries. Ports `1001/tcp`, `5140/tcp`, and `5140/udp` were listening, the
+  certificate renewal timer was active, and post-test health reported no active
+  TURN allocations.
+
+The `v0.1.0-alpha.2` persistent-notepad deployment passed these public checks on
+2026-07-28:
 
 - The no-version installer selected `v0.1.0-alpha.2`, verified its release
   checksum, and installed a client whose default health probe used
