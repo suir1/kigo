@@ -155,8 +155,9 @@ func TestNegotiationDisablesNativeDirectWithProxy(t *testing.T) {
 }
 
 func TestNegotiationURL(t *testing.T) {
-	got, err := negotiationURL(
+	got, err := rendezvousURL(
 		"https://kigo.example/base?ignored=1#fragment",
+		"/api/negotiate/",
 		appNegotiationTestToken,
 		"receiver",
 	)
@@ -167,7 +168,7 @@ func TestNegotiationURL(t *testing.T) {
 	if got != want {
 		t.Fatalf("URL = %q, want %q", got, want)
 	}
-	got, err = negotiationURL("127.0.0.1:8080", appNegotiationTestToken, "sender")
+	got, err = rendezvousURL("127.0.0.1:8080", "/api/negotiate/", appNegotiationTestToken, "sender")
 	if err != nil {
 		t.Fatal(err)
 	}
