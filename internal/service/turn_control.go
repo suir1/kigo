@@ -273,35 +273,24 @@ func (q *turnAllocationQuota) Stats() turnAllocationStats {
 }
 
 func (q *turnAllocationQuota) ConsumeClient(addr net.Addr, bytes int) bool {
-	identity, tracked := q.identityForClient(addressKey(addr))
-	return q.consume(identity, tracked, bytes)
+	return q.consume(q.allocationsByClient, addressKey(addr), bytes)
 }
 
 func (q *turnAllocationQuota) ConsumeRelay(key string, bytes int) bool {
-	identity, tracked := q.identityForRelay(key)
-	return q.consume(identity, tracked, bytes)
+	return q.consume(q.allocationsByRelay, key, bytes)
 }
 
-func (q *turnAllocationQuota) identityForClient(key string) (turnAllocationIdentity, bool) {
+func (q *turnAllocationQuota) consume(
+	allocations map[string]turnAllocationIdentity,
+	key string,
+	bytes int,
+) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	identity, ok := q.allocationsByClient[key]
-	return identity, ok
-}
-
-func (q *turnAllocationQuota) identityForRelay(key string) (turnAllocationIdentity, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	identity, ok := q.allocationsByRelay[key]
-	return identity, ok
-}
-
-func (q *turnAllocationQuota) consume(identity turnAllocationIdentity, tracked bool, bytes int) bool {
+	identity, tracked := allocations[key]
 	if !tracked || bytes <= 0 {
 		return true
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
 	now := q.now()
 	q.cleanupBucketsLocked(now)
 
