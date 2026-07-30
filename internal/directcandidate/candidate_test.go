@@ -1,6 +1,7 @@
 package directcandidate
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -86,5 +87,16 @@ func TestMergePrefersMetadataAndInfersLegacyCandidates(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeAddressesFiltersInvalidAndDuplicateValues(t *testing.T) {
+	input := []string{"bad", "127.0.0.1:4000", "127.0.0.1:4000", "host.example:not-a-port"}
+	for port := 4001; port <= 4008; port++ {
+		input = append(input, fmt.Sprintf("127.0.0.1:%d", port))
+	}
+	got := NormalizeAddresses(input)
+	if len(got) != MaxCandidates || got[0] != "127.0.0.1:4000" || got[len(got)-1] != "127.0.0.1:4007" {
+		t.Fatalf("addresses = %#v", got)
 	}
 }
