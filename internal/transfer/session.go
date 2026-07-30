@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/suir1/kigo/internal/mux"
 	"github.com/suir1/kigo/internal/protocol"
@@ -177,11 +178,11 @@ func initSenderPipes(ctx context.Context, t transport.Transport, code string) ([
 	if err := validateHello(ack, "hello_ack"); err != nil {
 		return nil, err
 	}
-	if ack.Compression != "" && !containsString(hello.Compressions, ack.Compression) {
+	if ack.Compression != "" && !slices.Contains(hello.Compressions, ack.Compression) {
 		return nil, fmt.Errorf("receiver selected unsupported compression %q", ack.Compression)
 	}
 	for _, feature := range ack.Features {
-		if !containsString(hello.Features, feature) {
+		if !slices.Contains(hello.Features, feature) {
 			return nil, fmt.Errorf("receiver selected unsupported feature %q", feature)
 		}
 	}
@@ -189,8 +190,8 @@ func initSenderPipes(ctx context.Context, t transport.Transport, code string) ([
 	if connectionCount > len(channels) {
 		return nil, fmt.Errorf("receiver selected %d connections, sender has %d", connectionCount, len(channels))
 	}
-	striping := connectionCount > 1 && containsString(ack.Features, featureChunkStriping)
-	deferredFileSHA256 := containsString(ack.Features, featureDeferredFileSHA256)
+	striping := connectionCount > 1 && slices.Contains(ack.Features, featureChunkStriping)
+	deferredFileSHA256 := slices.Contains(ack.Features, featureDeferredFileSHA256)
 	closeUnusedChannels(channels, connectionCount)
 	pipes := make([]*securePipe, connectionCount)
 	for index := range connectionCount {
@@ -250,8 +251,8 @@ func initReceiverPipes(ctx context.Context, t transport.Transport, code string) 
 			return nil, err
 		}
 		pipes[index] = pipe
-		pipe.striping = containsString(features, featureChunkStriping)
-		pipe.deferredFileSHA256 = containsString(features, featureDeferredFileSHA256)
+		pipe.striping = slices.Contains(features, featureChunkStriping)
+		pipe.deferredFileSHA256 = slices.Contains(features, featureDeferredFileSHA256)
 	}
 	return pipes, nil
 }
@@ -323,27 +324,18 @@ func validateHello(msg helloMessage, wantType string) error {
 }
 
 func selectCompression(offered []string) string {
-	if containsString(offered, compressionGzip) {
+	if slices.Contains(offered, compressionGzip) {
 		return compressionGzip
 	}
 	return ""
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func selectFeatures(offered []string, connectionCount int) []string {
 	var selected []string
-	if connectionCount > 1 && containsString(offered, featureChunkStriping) {
+	if connectionCount > 1 && slices.Contains(offered, featureChunkStriping) {
 		selected = append(selected, featureChunkStriping)
 	}
-	if containsString(offered, featureDeferredFileSHA256) {
+	if slices.Contains(offered, featureDeferredFileSHA256) {
 		selected = append(selected, featureDeferredFileSHA256)
 	}
 	return selected

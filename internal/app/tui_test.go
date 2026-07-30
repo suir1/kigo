@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -372,7 +373,7 @@ func TestTUIBrowserReceiveModeRestrictsSelectionToDirectories(t *testing.T) {
 	if model.browser.mode != pathPickDirectoryOnly {
 		t.Fatalf("browser mode = %d", model.browser.mode)
 	}
-	if containsString(pathBrowserLabels(model.browser.entries), "payload.txt") {
+	if slices.Contains(pathBrowserLabels(model.browser.entries), "payload.txt") {
 		t.Fatalf("directory browser listed file: %#v", pathBrowserLabels(model.browser.entries))
 	}
 	model.browser.selected = browserEntryIndex(t, model.browser.entries, pathBrowserDirectoryLabel("output"))
@@ -397,7 +398,7 @@ func TestTUIBrowserFiltersAndTogglesSort(t *testing.T) {
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("beta")})
 	labels := pathBrowserLabels(model.browser.entries)
-	if !containsString(labels, "beta.txt") || containsString(labels, "alpha.txt") {
+	if !slices.Contains(labels, "beta.txt") || slices.Contains(labels, "alpha.txt") {
 		t.Fatalf("filtered labels = %#v", labels)
 	}
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyTab})
@@ -405,7 +406,7 @@ func TestTUIBrowserFiltersAndTogglesSort(t *testing.T) {
 		t.Fatalf("sort=%d err=%q", model.browser.sort, model.browser.err)
 	}
 	model = updateTUIKey(model, tea.KeyMsg{Type: tea.KeyCtrlU})
-	if model.browser.filter != "" || !containsString(pathBrowserLabels(model.browser.entries), "alpha.txt") {
+	if model.browser.filter != "" || !slices.Contains(pathBrowserLabels(model.browser.entries), "alpha.txt") {
 		t.Fatalf("filter=%q labels=%#v", model.browser.filter, pathBrowserLabels(model.browser.entries))
 	}
 }
