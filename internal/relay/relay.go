@@ -310,10 +310,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	candidates := normalizeDirectCandidates(join.Direct, join.DirectCandidates)
+	candidates := directcandidate.NormalizeAddresses(append([]string{join.Direct}, join.DirectCandidates...))
 	candidateMetadata := normalizeDirectCandidateMetadata(candidates, join.DirectCandidateMetadata)
 	capabilities := normalizeCapabilities(join.Capabilities)
-	udpCandidates := normalizeDirectCandidates("", join.UDPCandidates)
+	udpCandidates := directcandidate.NormalizeAddresses(join.UDPCandidates)
 	if !hasCapability(capabilities, CapabilityUDPPunchV1) {
 		udpCandidates = nil
 	}
@@ -547,29 +547,6 @@ func (s *Server) cleanupExpired() {
 
 func validRole(role string) bool {
 	return role == "sender" || role == "receiver"
-}
-
-func normalizeDirectCandidates(legacy string, candidates []string) []string {
-	seen := make(map[string]struct{}, len(candidates)+1)
-	out := make([]string, 0, min(len(candidates)+1, directcandidate.MaxCandidates))
-	add := func(candidate string) {
-		if len(out) >= directcandidate.MaxCandidates || candidate == "" {
-			return
-		}
-		if directcandidate.ValidateAddress(candidate) != nil {
-			return
-		}
-		if _, ok := seen[candidate]; ok {
-			return
-		}
-		seen[candidate] = struct{}{}
-		out = append(out, candidate)
-	}
-	add(legacy)
-	for _, candidate := range candidates {
-		add(candidate)
-	}
-	return out
 }
 
 func normalizeDirectCandidateMetadata(
