@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/suir1/kigo/internal/localstate"
 	"github.com/suir1/kigo/internal/secure"
 	"golang.org/x/crypto/hkdf"
 )
@@ -100,7 +101,9 @@ func (s *DraftStore) Save(code, role string, document Document) error {
 	path := s.entryPath(code, role, pad)
 	draftFileMu.Lock()
 	defer draftFileMu.Unlock()
-	if err := withDraftFileLock(path, func() error { return writeDraftRecord(path, record) }); err != nil {
+	if err := localstate.WithFileLock(path, func() error {
+		return localstate.WriteJSON(path, record)
+	}); err != nil {
 		return err
 	}
 	pruneDraftDirectory(s.path, now)
@@ -219,49 +222,6 @@ func readDraftRecord(path string) (draftRecord, error) {
 	return record, nil
 }
 
-func writeDraftRecord(path string, record draftRecord) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(dir, ".note-draft-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := file.Name()
-	cleanup := func() {
-		_ = file.Close()
-		_ = os.Remove(tempPath)
-	}
-	if err := file.Chmod(0o600); err != nil {
-		cleanup()
-		return err
-	}
-	if err := json.NewEncoder(file).Encode(record); err != nil {
-		cleanup()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			_ = os.Remove(tempPath)
-			return err
-		}
-		if retryErr := os.Rename(tempPath, path); retryErr != nil {
-			_ = os.Remove(tempPath)
-			return retryErr
-		}
-	}
-	return nil
-}
-
 func pruneDraftDirectory(path string, now time.Time) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -291,32 +251,5 @@ func pruneDraftDirectory(path string, now time.Time) {
 	for len(ages) > draftStoreMaxDocs {
 		_ = os.Remove(ages[0].path)
 		ages = ages[1:]
-	}
-}
-
-func withDraftFileLock(path string, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	lockPath := path + ".lock"
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_ = lock.Close()
-			defer os.Remove(lockPath)
-			return fn()
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > 30*time.Second {
-			_ = os.Remove(lockPath)
-			continue
-		}
-		if time.Now().After(deadline) {
-			return errors.New("note draft lock timed out")
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }
