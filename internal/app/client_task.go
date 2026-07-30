@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,8 +29,6 @@ func runClientTask(
 		return runReceiveTask(ctx, options, request)
 	case textSendTaskRequest:
 		return runTextSendTask(ctx, options, request)
-	case textReceiveTaskRequest:
-		return runTextReceiveTask(ctx, options, request)
 	case doctorTaskRequest:
 		return runDoctorTask(ctx, options, request)
 	default:
@@ -137,38 +134,6 @@ func runTextSendTask(ctx context.Context, g *globalOptions, request textSendTask
 			})
 		},
 	)
-}
-
-func runTextReceiveTask(ctx context.Context, g *globalOptions, request textReceiveTaskRequest) error {
-	code, err := secure.ValidateCode(request.Code)
-	if err != nil {
-		return err
-	}
-	out := strings.TrimSpace(request.OutputDir)
-	if out == "" {
-		out = filepath.Clean(".")
-	}
-	taskLinef(g, "Joining room: %s", code)
-	var texts []transfer.ReceivedText
-	err = runPairedTransfer(
-		ctx, g, code, "receiver",
-		func(ctx context.Context, t transport.Transport, routeOptions *globalOptions) error {
-			var receiveErr error
-			texts, receiveErr = transfer.Receive(ctx, t, transfer.ReceiverOptions{
-				Code:      code,
-				OutputDir: out,
-				Logf:      taskLogger(routeOptions),
-			})
-			return receiveErr
-		},
-	)
-	if err != nil {
-		return err
-	}
-	for _, text := range texts {
-		taskLine(g, text.Text)
-	}
-	return nil
 }
 
 type pairedTransferAttempt func(context.Context, transport.Transport, *globalOptions) error
