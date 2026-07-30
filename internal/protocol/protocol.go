@@ -72,6 +72,20 @@ func NewManifest(items []Item) Manifest {
 	return Manifest{Version: Version, Items: items}
 }
 
+func ValidSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') &&
+			(character < 'a' || character > 'f') &&
+			(character < 'A' || character > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 func NowMillis() int64 {
 	return time.Now().UnixMilli()
 }

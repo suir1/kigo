@@ -671,7 +671,7 @@ func TestSendPathUsesWeightedDirectoryFileScheduling(t *testing.T) {
 		t.Fatalf("expected root directory and 2 files, got %#v", msg.Manifest.Items)
 	}
 	for _, item := range msg.Manifest.Items[1:] {
-		if item.SHA256 != "" || !isHexSHA256(item.SampleSHA256) {
+		if item.SHA256 != "" || !protocol.ValidSHA256(item.SampleSHA256) {
 			t.Fatalf("deferred manifest file hashes = %#v", item)
 		}
 	}
@@ -697,7 +697,7 @@ func TestSendPathUsesWeightedDirectoryFileScheduling(t *testing.T) {
 			if len(msg.Resume) != 2 || msg.Resume[0].Offset != 0 || msg.Resume[1].Offset != 0 {
 				t.Fatalf("resume_accept = %#v", msg.Resume)
 			}
-			if !isHexSHA256(msg.Resume[0].SHA256) || !isHexSHA256(msg.Resume[1].SHA256) {
+			if !protocol.ValidSHA256(msg.Resume[0].SHA256) || !protocol.ValidSHA256(msg.Resume[1].SHA256) {
 				t.Fatalf("resume_accept omitted deferred hashes: %#v", msg.Resume)
 			}
 		case "stream_open":

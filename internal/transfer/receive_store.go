@@ -774,10 +774,10 @@ func validateManifest(manifest *protocol.Manifest) error {
 		if item.ChunkSize <= 0 || item.ChunkSize > protocol.ChunkSize {
 			return fmt.Errorf("manifest item %s has invalid chunk size %d", item.Name, item.ChunkSize)
 		}
-		if item.SHA256 != "" && !isHexSHA256(item.SHA256) {
+		if item.SHA256 != "" && !protocol.ValidSHA256(item.SHA256) {
 			return fmt.Errorf("manifest item %s has invalid sha256", item.Name)
 		}
-		if item.SampleSHA256 != "" && !isHexSHA256(item.SampleSHA256) {
+		if item.SampleSHA256 != "" && !protocol.ValidSHA256(item.SampleSHA256) {
 			return fmt.Errorf("manifest item %s has invalid sample_sha256", item.Name)
 		}
 		hasPath := false
@@ -848,19 +848,6 @@ func validateSafeSymlinkTarget(name, target string) error {
 		}
 	}
 	return nil
-}
-
-func isHexSHA256(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for _, r := range value {
-		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func verifyTextItem(text string, item protocol.Item) error {
