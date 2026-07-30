@@ -181,131 +181,75 @@ func TestRaceJoinPublishesRelayObservedPublicCandidate(t *testing.T) {
 	if !netreuse.Supported {
 		t.Skip("same-port socket reuse is unsupported on this platform")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	relayAddr := startTestRelay(t, ctx)
-	directListener, err := netreuse.ListenTCP(ctx, "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct{ role, candidate string }{
+		{"sender", "10.0.0.2:4000"},
+		{"receiver", "10.0.0.3:4000"},
 	}
-	defer directListener.Close()
-	directPort, err := listenerPort(directListener.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidates := []Candidate{{Addr: relayAddr, Kind: "external"}}
-	senderCh := make(chan candidateResult, 1)
-	go func() {
-		result, err := RaceJoin(ctx, RaceOptions{
-			Candidates: candidates,
-			Join: JoinOptions{
-				RoomToken:            "public-race-room",
-				Role:                 "sender",
-				DirectCandidates:     []string{"10.0.0.2:4000"},
-				DirectProbeLocalPort: directPort,
-			},
+	for _, test := range tests {
+		t.Run(test.role, func(t *testing.T) {
+			publisherRole := test.role
+			peerRole := "receiver"
+			if publisherRole == "receiver" {
+				peerRole = "sender"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			relayAddr := startTestRelay(t, ctx)
+			directListener, err := netreuse.ListenTCP(ctx, "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer directListener.Close()
+			directPort, err := listenerPort(directListener.Addr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			roomToken := publisherRole + "-public-race-room"
+			candidates := []Candidate{{Addr: relayAddr, Kind: "external"}}
+			publisherCh := make(chan candidateResult, 1)
+			go func() {
+				result, err := RaceJoin(ctx, RaceOptions{
+					Candidates: candidates,
+					Join: JoinOptions{
+						RoomToken:            roomToken,
+						Role:                 publisherRole,
+						DirectCandidates:     []string{test.candidate},
+						DirectProbeLocalPort: directPort,
+					},
+				})
+				publisherCh <- candidateResult{result: result, err: err}
+			}()
+			peer, err := RaceJoin(ctx, RaceOptions{
+				Candidates: candidates,
+				Join:       JoinOptions{RoomToken: roomToken, Role: peerRole},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer peer.Transport.Close()
+			publisher := <-publisherCh
+			if publisher.err != nil {
+				t.Fatal(publisher.err)
+			}
+			defer publisher.result.Transport.Close()
+			if len(peer.PeerDirectCandidates) != 2 {
+				t.Fatalf("peer candidates = %#v", peer.PeerDirectCandidates)
+			}
+			if len(peer.PeerDirectCandidateMetadata) != 1 {
+				t.Fatalf("peer candidate metadata = %#v", peer.PeerDirectCandidateMetadata)
+			}
+			public := peer.PeerDirectCandidateMetadata[0]
+			if public.Kind != directcandidate.KindPublic || public.Priority != directcandidate.PriorityPublic {
+				t.Fatalf("public candidate = %#v", public)
+			}
+			_, portText, err := net.SplitHostPort(public.Address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if portText != strconv.Itoa(directPort) {
+				t.Fatalf("public candidate = %q, want port %d", public.Address, directPort)
+			}
 		})
-		senderCh <- candidateResult{result: result, err: err}
-	}()
-	receiver, err := RaceJoin(ctx, RaceOptions{
-		Candidates: candidates,
-		Join: JoinOptions{
-			RoomToken: "public-race-room",
-			Role:      "receiver",
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer receiver.Transport.Close()
-	sender := <-senderCh
-	if sender.err != nil {
-		t.Fatal(sender.err)
-	}
-	defer sender.result.Transport.Close()
-	if len(receiver.PeerDirectCandidates) != 2 {
-		t.Fatalf("peer candidates = %#v", receiver.PeerDirectCandidates)
-	}
-	if len(receiver.PeerDirectCandidateMetadata) != 1 {
-		t.Fatalf("peer candidate metadata = %#v", receiver.PeerDirectCandidateMetadata)
-	}
-	public := receiver.PeerDirectCandidateMetadata[0]
-	if public.Kind != directcandidate.KindPublic ||
-		public.Priority != directcandidate.PriorityPublic {
-		t.Fatalf("public candidate = %#v", public)
-	}
-	_, portText, err := net.SplitHostPort(public.Address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if portText != strconv.Itoa(directPort) {
-		t.Fatalf("public candidate = %q, want port %d", public.Address, directPort)
-	}
-}
-
-func TestRaceJoinPublishesReceiverRelayObservedPublicCandidate(t *testing.T) {
-	if !netreuse.Supported {
-		t.Skip("same-port socket reuse is unsupported on this platform")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	relayAddr := startTestRelay(t, ctx)
-	directListener, err := netreuse.ListenTCP(ctx, "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer directListener.Close()
-	directPort, err := listenerPort(directListener.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidates := []Candidate{{Addr: relayAddr, Kind: "external"}}
-	receiverCh := make(chan candidateResult, 1)
-	go func() {
-		result, err := RaceJoin(ctx, RaceOptions{
-			Candidates: candidates,
-			Join: JoinOptions{
-				RoomToken:            "receiver-public-race-room",
-				Role:                 "receiver",
-				DirectCandidates:     []string{"10.0.0.3:4000"},
-				DirectProbeLocalPort: directPort,
-			},
-		})
-		receiverCh <- candidateResult{result: result, err: err}
-	}()
-	sender, err := RaceJoin(ctx, RaceOptions{
-		Candidates: candidates,
-		Join: JoinOptions{
-			RoomToken: "receiver-public-race-room",
-			Role:      "sender",
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sender.Transport.Close()
-	receiver := <-receiverCh
-	if receiver.err != nil {
-		t.Fatal(receiver.err)
-	}
-	defer receiver.result.Transport.Close()
-	if len(sender.PeerDirectCandidates) != 2 {
-		t.Fatalf("peer candidates = %#v", sender.PeerDirectCandidates)
-	}
-	if len(sender.PeerDirectCandidateMetadata) != 1 {
-		t.Fatalf("peer candidate metadata = %#v", sender.PeerDirectCandidateMetadata)
-	}
-	public := sender.PeerDirectCandidateMetadata[0]
-	if public.Kind != directcandidate.KindPublic ||
-		public.Priority != directcandidate.PriorityPublic {
-		t.Fatalf("public candidate = %#v", public)
-	}
-	_, portText, err := net.SplitHostPort(public.Address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if portText != strconv.Itoa(directPort) {
-		t.Fatalf("public candidate = %q, want port %d", public.Address, directPort)
 	}
 }
 
