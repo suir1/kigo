@@ -2,7 +2,6 @@ package mux
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/suir1/kigo/internal/protocol"
 )
@@ -150,10 +149,10 @@ func (p *Plan) ValidateResumeEntry(items []protocol.Item, entry protocol.ResumeE
 	if entry.Offset < 0 {
 		return 0, fmt.Errorf("negative resume offset for %s: %d", items[entry.Item].Name, entry.Offset)
 	}
-	if entry.PrefixSHA256 != "" && !validSHA256(entry.PrefixSHA256) {
+	if entry.PrefixSHA256 != "" && !protocol.ValidSHA256(entry.PrefixSHA256) {
 		return 0, fmt.Errorf("invalid resume prefix sha256 for %s", items[entry.Item].Name)
 	}
-	if entry.SHA256 != "" && !validSHA256(entry.SHA256) {
+	if entry.SHA256 != "" && !protocol.ValidSHA256(entry.SHA256) {
 		return 0, fmt.Errorf("invalid resume sha256 for %s", items[entry.Item].Name)
 	}
 	if entry.Complete && !entry.Skip {
@@ -171,18 +170,6 @@ func (p *Plan) ValidateResumeEntry(items []protocol.Item, entry protocol.ResumeE
 		}
 	}
 	return clampInt64(entry.Offset, 0, items[entry.Item].Size), nil
-}
-
-func validSHA256(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for _, r := range strings.ToLower(value) {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func NewTracker(plan *Plan) *Tracker {

@@ -56,4 +56,7 @@ func TestOptionalCompletedFingerprintFieldsMarshal(t *testing.T) {
 	if !strings.Contains(string(payload), `"sha256":"`+strings.Repeat("b", 64)+`"`) || !strings.Contains(string(payload), `"skip":true`) || !strings.Contains(string(payload), `"complete":true`) {
 		t.Fatalf("completed skip fields were omitted: %s", payload)
 	}
+	if !ValidSHA256(strings.Repeat("A", 64)) || ValidSHA256("bad") {
+		t.Fatal("SHA-256 validation rejected hex or accepted an invalid length")
+	}
 }
