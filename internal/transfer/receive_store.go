@@ -83,14 +83,6 @@ func ParseConflictPolicy(value string) (ConflictPolicy, error) {
 	}
 }
 
-func NewReceiveStore(manifest *protocol.Manifest, outputDir string, logf Logger) (*ReceiveStore, error) {
-	return NewReceiveStoreWithOptions(manifest, ReceiveStoreOptions{
-		OutputDir: outputDir,
-		Logf:      logf,
-		Conflict:  ConflictOverwrite,
-	})
-}
-
 func NewReceiveStoreWithOptions(manifest *protocol.Manifest, opts ReceiveStoreOptions) (*ReceiveStore, error) {
 	if err := validateManifest(manifest); err != nil {
 		return nil, err
