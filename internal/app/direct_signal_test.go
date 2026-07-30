@@ -14,8 +14,9 @@ import (
 )
 
 func TestDirectRendezvousURL(t *testing.T) {
-	got, err := directRendezvousURL(
+	got, err := rendezvousURL(
 		"https://kigo.example/base?ignored=1#fragment",
+		"/api/direct/",
 		appNegotiationTestToken,
 		"receiver",
 	)
