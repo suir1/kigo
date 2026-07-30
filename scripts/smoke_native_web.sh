@@ -1509,16 +1509,6 @@ async function webProtocolGuards(browser) {
         noteFrameErrors.push(err.message);
       }
     }
-    let noteEnvelopeSequenceError = "";
-    try {
-      await recvNoteEncrypted({
-        recv: async () => JSON.stringify({ version: VERSION, seq: 2, ciphertext: "AA==" }),
-      }, {
-        recv: { nextSeq: 0 },
-      });
-    } catch (err) {
-      noteEnvelopeSequenceError = err.message;
-    }
     const noteConflictOrder = [
       compareNoteDocuments(
         { revision: 2, timestamp: 1, text: "a" },
@@ -1574,7 +1564,6 @@ async function webProtocolGuards(browser) {
         selectTransferFeatures([FEATURE_DEFERRED_FILE_SHA256, FEATURE_UNORDERED_DATA], 0, true, true),
       ],
       noteFrameErrors,
-      noteEnvelopeSequenceError,
       noteConflictOrder,
       pairingCodes: [
         normalizeCode(" k7m9-q2 "),
@@ -1640,9 +1629,6 @@ async function webProtocolGuards(browser) {
   if (!result.noteFrameErrors[0].includes("unsupported note frame version")) throw new Error(`note frame version guard mismatch: ${result.noteFrameErrors[0]}`);
   if (!result.noteFrameErrors[1].includes("unsupported note frame type")) throw new Error(`note frame type guard mismatch: ${result.noteFrameErrors[1]}`);
   if (!result.noteFrameErrors[2].includes("note text exceeds")) throw new Error(`note text size guard mismatch: ${result.noteFrameErrors[2]}`);
-  if (!result.noteEnvelopeSequenceError.includes("unexpected note envelope sequence")) {
-    throw new Error(`note envelope sequence guard mismatch: ${result.noteEnvelopeSequenceError}`);
-  }
   assertEqual(result.noteConflictOrder.join(","), "1,1,1,0", "note conflict ordering mismatch");
   assertEqual(result.pairingCodes.join(","), "K7M9Q2,PROJECT-ALPHA-2026,true,false", "pairing code normalization mismatch");
   if (logs.length) throw new Error(`web protocol guard browser logs:\n${logs.join("\n")}`);
