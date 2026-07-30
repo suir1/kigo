@@ -43,12 +43,16 @@ type observedCounters struct {
 	received atomic.Int64
 }
 
-type ObservedTransport struct {
+type countedTransport struct {
 	inner    Transport
-	info     RouteInfo
 	counters *observedCounters
-	pathMu   sync.RWMutex
-	paths    []PhysicalPathStats
+}
+
+type ObservedTransport struct {
+	countedTransport
+	info   RouteInfo
+	pathMu sync.RWMutex
+	paths  []PhysicalPathStats
 }
 
 func Observe(t Transport, info RouteInfo) Transport {
@@ -59,9 +63,8 @@ func Observe(t Transport, info RouteInfo) Transport {
 		info.Connections = len(Channels(t))
 	}
 	return &ObservedTransport{
-		inner:    t,
-		info:     info,
-		counters: &observedCounters{},
+		countedTransport: countedTransport{inner: t, counters: &observedCounters{}},
+		info:             info,
 	}
 }
 
@@ -86,7 +89,7 @@ func SnapshotPhysicalPathWeights(t Transport) []float64 {
 	return nil
 }
 
-func (t *ObservedTransport) Send(ctx context.Context, payload []byte) error {
+func (t *countedTransport) Send(ctx context.Context, payload []byte) error {
 	if err := t.inner.Send(ctx, payload); err != nil {
 		return err
 	}
@@ -94,7 +97,7 @@ func (t *ObservedTransport) Send(ctx context.Context, payload []byte) error {
 	return nil
 }
 
-func (t *ObservedTransport) Recv(ctx context.Context) ([]byte, error) {
+func (t *countedTransport) Recv(ctx context.Context) ([]byte, error) {
 	payload, err := t.inner.Recv(ctx)
 	if err != nil {
 		return nil, err
@@ -103,7 +106,7 @@ func (t *ObservedTransport) Recv(ctx context.Context) ([]byte, error) {
 	return payload, nil
 }
 
-func (t *ObservedTransport) Close() error {
+func (t *countedTransport) Close() error {
 	return t.inner.Close()
 }
 
@@ -111,7 +114,7 @@ func (t *ObservedTransport) Channels() []Transport {
 	channels := Channels(t.inner)
 	observed := make([]Transport, len(channels))
 	for index, channel := range channels {
-		observed[index] = &observedChannel{
+		observed[index] = &countedTransport{
 			inner:    channel,
 			counters: t.counters,
 		}
@@ -139,30 +142,4 @@ func (t *ObservedTransport) RecordPhysicalPathStats(stats []PhysicalPathStats) {
 
 func (t *ObservedTransport) PhysicalPathWeights() []float64 {
 	return append([]float64(nil), t.info.PathWeights...)
-}
-
-type observedChannel struct {
-	inner    Transport
-	counters *observedCounters
-}
-
-func (t *observedChannel) Send(ctx context.Context, payload []byte) error {
-	if err := t.inner.Send(ctx, payload); err != nil {
-		return err
-	}
-	t.counters.sent.Add(int64(len(payload)))
-	return nil
-}
-
-func (t *observedChannel) Recv(ctx context.Context) ([]byte, error) {
-	payload, err := t.inner.Recv(ctx)
-	if err != nil {
-		return nil, err
-	}
-	t.counters.received.Add(int64(len(payload)))
-	return payload, nil
-}
-
-func (t *observedChannel) Close() error {
-	return t.inner.Close()
 }
