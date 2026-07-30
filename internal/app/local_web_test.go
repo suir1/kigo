@@ -46,9 +46,13 @@ func TestLocalWebAPIRequiresTokenAndReturnsSafeConfig(t *testing.T) {
 	handler := server.handler()
 
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/config", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+	wrongMethod := localWebJSONRequest(t, handler, http.MethodPost, "/api/config", "")
+	if wrongMethod.Code != http.StatusMethodNotAllowed || wrongMethod.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("wrong method status=%d allow=%q", wrongMethod.Code, wrongMethod.Header().Get("Allow"))
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/config", nil)

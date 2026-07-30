@@ -170,22 +170,22 @@ func (s *localWebServer) handler() http.Handler {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/local.css", s.handleCSS)
 	mux.HandleFunc("/local.js", s.handleJS)
-	mux.HandleFunc("/api/config", s.auth(s.handleConfig))
-	mux.HandleFunc("/api/job", s.auth(s.handleJob))
-	mux.HandleFunc("/api/send", s.auth(s.handleSend))
-	mux.HandleFunc("/api/recv", s.auth(s.handleRecv))
-	mux.HandleFunc("/api/browse", s.auth(s.handleBrowse))
-	mux.HandleFunc("/api/doctor", s.auth(s.handleDoctor))
-	mux.HandleFunc("/api/job/cancel", s.auth(s.handleCancel))
-	mux.HandleFunc("/api/note", s.auth(s.handleNote))
-	mux.HandleFunc("/api/note/host", s.auth(s.handleNoteHost))
-	mux.HandleFunc("/api/note/join", s.auth(s.handleNoteJoin))
-	mux.HandleFunc("/api/note/update", s.auth(s.handleNoteUpdate))
-	mux.HandleFunc("/api/note/clear", s.auth(s.handleNoteClear))
-	mux.HandleFunc("/api/note/leave", s.auth(s.handleNoteLeave))
-	mux.HandleFunc("/api/note/recents", s.auth(s.handleNoteRecents))
-	mux.HandleFunc("/api/note/recents/favorite", s.auth(s.handleNoteRecentFavorite))
-	mux.HandleFunc("/api/note/recents/forget", s.auth(s.handleNoteRecentForget))
+	mux.HandleFunc("/api/config", s.auth(requireMethod(http.MethodGet, s.handleConfig)))
+	mux.HandleFunc("/api/job", s.auth(requireMethod(http.MethodGet, s.handleJob)))
+	mux.HandleFunc("/api/send", s.auth(requireMethod(http.MethodPost, s.handleSend)))
+	mux.HandleFunc("/api/recv", s.auth(requireMethod(http.MethodPost, s.handleRecv)))
+	mux.HandleFunc("/api/browse", s.auth(requireMethod(http.MethodGet, s.handleBrowse)))
+	mux.HandleFunc("/api/doctor", s.auth(requireMethod(http.MethodPost, s.handleDoctor)))
+	mux.HandleFunc("/api/job/cancel", s.auth(requireMethod(http.MethodPost, s.handleCancel)))
+	mux.HandleFunc("/api/note", s.auth(requireMethod(http.MethodGet, s.handleNote)))
+	mux.HandleFunc("/api/note/host", s.auth(requireMethod(http.MethodPost, s.handleNoteHost)))
+	mux.HandleFunc("/api/note/join", s.auth(requireMethod(http.MethodPost, s.handleNoteJoin)))
+	mux.HandleFunc("/api/note/update", s.auth(requireMethod(http.MethodPost, s.handleNoteUpdate)))
+	mux.HandleFunc("/api/note/clear", s.auth(requireMethod(http.MethodPost, s.handleNoteClear)))
+	mux.HandleFunc("/api/note/leave", s.auth(requireMethod(http.MethodPost, s.handleNoteLeave)))
+	mux.HandleFunc("/api/note/recents", s.auth(requireMethod(http.MethodGet, s.handleNoteRecents)))
+	mux.HandleFunc("/api/note/recents/favorite", s.auth(requireMethod(http.MethodPost, s.handleNoteRecentFavorite)))
+	mux.HandleFunc("/api/note/recents/forget", s.auth(requireMethod(http.MethodPost, s.handleNoteRecentForget)))
 	return securityHeaders(mux)
 }
 
@@ -205,6 +205,16 @@ func (s *localWebServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		value := r.Header.Get(localWebTokenHeader)
 		if subtle.ConstantTimeCompare([]byte(value), []byte(s.token)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func requireMethod(method string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			methodNotAllowed(w, method)
 			return
 		}
 		next(w, r)
@@ -246,10 +256,6 @@ func serveLocalWebAsset(w http.ResponseWriter, r *http.Request, contentType, bod
 }
 
 func (s *localWebServer) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, http.MethodGet)
-		return
-	}
 	options := s.options
 	if options == nil {
 		options = &globalOptions{}
@@ -267,18 +273,10 @@ func (s *localWebServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *localWebServer) handleJob(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, http.MethodGet)
-		return
-	}
 	writeLocalWebJSON(w, http.StatusOK, s.job.Snapshot())
 }
 
 func (s *localWebServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, http.MethodGet)
-		return
-	}
 	path := r.URL.Query().Get("path")
 	if len(path) > 4096 {
 		writeLocalWebError(w, http.StatusBadRequest, "browse path is too long")
@@ -344,10 +342,6 @@ func (s *localWebServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *localWebServer) handleSend(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var request localWebSendRequest
 	if err := decodeLocalWebJSON(w, r, &request); err != nil {
 		return
@@ -382,10 +376,6 @@ func (s *localWebServer) handleSend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *localWebServer) handleRecv(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var request localWebRecvRequest
 	if err := decodeLocalWebJSON(w, r, &request); err != nil {
 		return
@@ -417,10 +407,6 @@ func (s *localWebServer) handleRecv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *localWebServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var request localWebDoctorRequest
 	if err := decodeLocalWebJSON(w, r, &request); err != nil {
 		return
@@ -437,19 +423,11 @@ func (s *localWebServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *localWebServer) handleCancel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	s.job.Cancel()
 	writeLocalWebJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *localWebServer) handleNote(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, http.MethodGet)
-		return
-	}
 	if s.note == nil {
 		writeLocalWebError(w, http.StatusServiceUnavailable, "local notepad is unavailable")
 		return
@@ -458,10 +436,6 @@ func (s *localWebServer) handleNote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *localWebServer) handleNoteHost(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var request localWebNoteJoinRequest
 	if err := decodeLocalWebJSON(w, r, &request); err != nil {
 		return
@@ -498,10 +472,6 @@ func (s *localWebServer) handleNoteHost(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *localWebServer) handleNoteJoin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var request localWebNoteJoinRequest
 	if err := decodeLocalWebJSON(w, r, &request); err != nil {
 		return
@@ -535,10 +505,6 @@ func (s *localWebServer) handleNoteJoin(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *localWebServer) handleNoteUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var request localWebNoteUpdateRequest
 	if err := decodeLocalWebJSON(w, r, &request); err != nil {
 		return
@@ -560,10 +526,6 @@ func (s *localWebServer) handleNoteUpdate(w http.ResponseWriter, r *http.Request
 }
 
 func (s *localWebServer) handleNoteClear(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	if s.note == nil {
 		writeLocalWebError(w, http.StatusServiceUnavailable, "local notepad is unavailable")
 		return
@@ -577,10 +539,6 @@ func (s *localWebServer) handleNoteClear(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *localWebServer) handleNoteLeave(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	if s.note == nil {
 		writeLocalWebError(w, http.StatusServiceUnavailable, "local notepad is unavailable")
 		return
@@ -589,10 +547,6 @@ func (s *localWebServer) handleNoteLeave(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *localWebServer) handleNoteRecents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, http.MethodGet)
-		return
-	}
 	if s.note == nil {
 		writeLocalWebError(w, http.StatusServiceUnavailable, "local notepad is unavailable")
 		return
@@ -606,10 +560,6 @@ func (s *localWebServer) handleNoteRecents(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *localWebServer) handleNoteRecentFavorite(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	request, ok := s.decodeNoteRecentRequest(w, r)
 	if !ok {
 		return
@@ -626,10 +576,6 @@ func (s *localWebServer) handleNoteRecentFavorite(w http.ResponseWriter, r *http
 }
 
 func (s *localWebServer) handleNoteRecentForget(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
 	request, ok := s.decodeNoteRecentRequest(w, r)
 	if !ok {
 		return
