@@ -283,9 +283,13 @@ func TestRelayBidirectionalDirectTransfersStripedFile(t *testing.T) {
 		)
 	}
 
+	prepared, err := transfer.PreparePathWithOptions(sourcePath, transfer.PrepareOptions{Symlinks: transfer.SymlinkFollow})
+	if err != nil {
+		t.Fatal(err)
+	}
 	sendErr := make(chan error, 1)
 	go func() {
-		sendErr <- transfer.SendPath(ctx, sender.transport, sourcePath, transfer.SenderOptions{
+		sendErr <- prepared.Send(ctx, sender.transport, transfer.SenderOptions{
 			Code: "ABC123",
 		})
 	}()
