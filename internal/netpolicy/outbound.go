@@ -2,6 +2,7 @@ package netpolicy
 
 import (
 	"net"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -103,7 +104,7 @@ func CollectInventory() Inventory {
 		}
 		for _, address := range addresses {
 			ip := addressIP(address)
-			if !usableIP(ip) || containsAddress(entry.Addresses, ip.String()) {
+			if !usableIP(ip) || slices.Contains(entry.Addresses, ip.String()) {
 				continue
 			}
 			entry.Addresses = append(entry.Addresses, ip.String())
@@ -284,13 +285,4 @@ func physicalInterfaceNameScore(name string) int {
 	default:
 		return 10
 	}
-}
-
-func containsAddress(addresses []string, target string) bool {
-	for _, address := range addresses {
-		if address == target {
-			return true
-		}
-	}
-	return false
 }

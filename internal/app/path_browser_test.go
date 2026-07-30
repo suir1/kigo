@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -47,11 +48,11 @@ func TestPathBrowserListsSortsAndFiltersEntries(t *testing.T) {
 	newerLabel := pathBrowserDirectoryLabel("newer")
 	olderLabel := pathBrowserDirectoryLabel("older")
 	for _, expected := range []string{parentLabel, newerLabel, olderLabel, "a.txt", "z.txt", "[Select this folder]"} {
-		if !containsString(labels, expected) {
+		if !slices.Contains(labels, expected) {
 			t.Fatalf("labels %#v missing %q", labels, expected)
 		}
 	}
-	if indexOfString(labels, newerLabel) > indexOfString(labels, "a.txt") {
+	if slices.Index(labels, newerLabel) > slices.Index(labels, "a.txt") {
 		t.Fatalf("directories should be listed before files: %#v", labels)
 	}
 
@@ -60,17 +61,17 @@ func TestPathBrowserListsSortsAndFiltersEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	modifiedLabels := pathBrowserLabels(modified)
-	if indexOfString(modifiedLabels, newerLabel) > indexOfString(modifiedLabels, olderLabel) ||
-		indexOfString(modifiedLabels, "z.txt") > indexOfString(modifiedLabels, "a.txt") {
+	if slices.Index(modifiedLabels, newerLabel) > slices.Index(modifiedLabels, olderLabel) ||
+		slices.Index(modifiedLabels, "z.txt") > slices.Index(modifiedLabels, "a.txt") {
 		t.Fatalf("modified order = %#v", modifiedLabels)
 	}
 
 	filtered := filterPathBrowserEntries(entries, "z.")
 	filteredLabels := pathBrowserLabels(filtered)
-	if !containsString(filteredLabels, parentLabel) ||
-		!containsString(filteredLabels, "z.txt") ||
-		!containsString(filteredLabels, "[Select this folder]") ||
-		containsString(filteredLabels, "a.txt") {
+	if !slices.Contains(filteredLabels, parentLabel) ||
+		!slices.Contains(filteredLabels, "z.txt") ||
+		!slices.Contains(filteredLabels, "[Select this folder]") ||
+		slices.Contains(filteredLabels, "a.txt") {
 		t.Fatalf("filtered labels = %#v", filteredLabels)
 	}
 }
@@ -91,7 +92,7 @@ func TestPathBrowserDirectoryOnlyAndNormalization(t *testing.T) {
 		t.Fatal(err)
 	}
 	labels := pathBrowserLabels(entries)
-	if !containsString(labels, pathBrowserDirectoryLabel("child")) || containsString(labels, "file.txt") {
+	if !slices.Contains(labels, pathBrowserDirectoryLabel("child")) || slices.Contains(labels, "file.txt") {
 		t.Fatalf("directory-only labels = %#v", labels)
 	}
 	normalized, err := normalizeBrowserDirectory(file)
@@ -124,17 +125,4 @@ func pathBrowserLabels(entries []pathBrowserEntry) []string {
 
 func pathBrowserDirectoryLabel(name string) string {
 	return name + string(os.PathSeparator)
-}
-
-func containsString(values []string, target string) bool {
-	return indexOfString(values, target) >= 0
-}
-
-func indexOfString(values []string, target string) int {
-	for index, value := range values {
-		if value == target {
-			return index
-		}
-	}
-	return -1
 }
