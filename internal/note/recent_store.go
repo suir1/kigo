@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/suir1/kigo/internal/localstate"
 	"github.com/suir1/kigo/internal/secure"
 )
 
@@ -139,7 +140,7 @@ func (s *RecentStore) Remove(code, pad string) error {
 func (s *RecentStore) update(change func([]RecentEntry) ([]RecentEntry, error)) error {
 	recentFileMu.Lock()
 	defer recentFileMu.Unlock()
-	return withDraftFileLock(s.path, func() error {
+	return localstate.WithFileLock(s.path, func() error {
 		entries, err := readRecentEntries(s.path)
 		if errors.Is(err, os.ErrNotExist) {
 			entries = []RecentEntry{}
@@ -150,7 +151,10 @@ func (s *RecentStore) update(change func([]RecentEntry) ([]RecentEntry, error)) 
 		if err != nil {
 			return err
 		}
-		return writeRecentEntries(s.path, entries)
+		return localstate.WriteJSON(s.path, recentFile{
+			Version: recentStoreVersion,
+			Entries: entries,
+		})
 	})
 }
 
@@ -208,51 +212,6 @@ func readRecentEntries(path string) ([]RecentEntry, error) {
 		seen[key] = struct{}{}
 	}
 	return stored.Entries, nil
-}
-
-func writeRecentEntries(path string, entries []RecentEntry) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(dir, ".note-recents-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := file.Name()
-	cleanup := func() {
-		_ = file.Close()
-		_ = os.Remove(tempPath)
-	}
-	if err := file.Chmod(0o600); err != nil {
-		cleanup()
-		return err
-	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(recentFile{Version: recentStoreVersion, Entries: entries}); err != nil {
-		cleanup()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			_ = os.Remove(tempPath)
-			return err
-		}
-		if retryErr := os.Rename(tempPath, path); retryErr != nil {
-			_ = os.Remove(tempPath)
-			return retryErr
-		}
-	}
-	return nil
 }
 
 func sortRecentEntries(entries []RecentEntry) {
