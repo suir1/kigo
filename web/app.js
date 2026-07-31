@@ -1840,25 +1840,6 @@ function fileStreamWeight(remaining) {
   return 1;
 }
 
-function adaptiveSendBudget(maxBytes, minBytes, metrics = {}) {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) return 0;
-  if (!Number.isSafeInteger(minBytes) || minBytes <= 0 || minBytes > maxBytes) minBytes = maxBytes;
-  let budget = maxBytes;
-  const buffered = Math.max(0, metrics.bufferedBytes || 0);
-  const limit = Math.max(0, metrics.bufferLimit || 0);
-  if (limit > 0) {
-    const pressure = buffered / limit;
-    if (pressure >= 0.75) budget = minBytes;
-    else if (pressure >= 0.5) budget = Math.max(Math.floor(maxBytes / 4), minBytes);
-    else if (pressure >= 0.25) budget = Math.max(Math.floor(maxBytes / 2), minBytes);
-  }
-  const waitMs = Math.max(0, metrics.lastWaitMs || 0);
-  if (waitMs >= 100) budget = minBytes;
-  else if (waitMs >= 20) budget = Math.min(budget, Math.max(Math.floor(maxBytes / 4), minBytes));
-  else if (waitMs >= 5) budget = Math.min(budget, Math.max(Math.floor(maxBytes / 2), minBytes));
-  return Math.max(Math.min(budget, maxBytes), minBytes);
-}
-
 function downloadName(name) {
   const parts = safeRelativeName(name).split("/");
   return parts[parts.length - 1] || "kigo-file";
@@ -2038,10 +2019,6 @@ function zipDosDateTime(millis) {
     time: ((value.getHours() & 0x1f) << 11) | ((value.getMinutes() & 0x3f) << 5) | ((Math.floor(value.getSeconds() / 2)) & 0x1f),
     date: ((year - 1980) << 9) | (((value.getMonth() + 1) & 0x0f) << 5) | (value.getDate() & 0x1f),
   };
-}
-
-function crc32(bytes) {
-  return crc32Parts([bytes]);
 }
 
 function crc32Parts(parts) {
