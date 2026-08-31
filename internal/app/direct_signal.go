@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 
 	"github.com/suir1/kigo/internal/directcandidate"
 	"github.com/suir1/kigo/internal/netprobe"
@@ -59,27 +58,10 @@ func exchangeDirectCapability(
 	if !isSignalRoleClient(role) {
 		return directRendezvousResponse{}, errors.New("invalid direct rendezvous role")
 	}
-	endpoint, err := directRendezvousURL(g.Signal, roomToken, role)
+	endpoint, err := rendezvousURL(g.Signal, "/api/direct/", roomToken, role)
 	if err != nil {
 		return directRendezvousResponse{}, err
 	}
-	conn, response, err := outboundWebSocketDialer(g).DialContext(ctx, endpoint, nil)
-	if response != nil && response.Body != nil {
-		defer response.Body.Close()
-	}
-	if err != nil {
-		return directRendezvousResponse{}, fmt.Errorf("connect direct rendezvous: %w", err)
-	}
-	defer conn.Close()
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-stop:
-		}
-	}()
 	capability := directRendezvousCapability{
 		Type:              "direct",
 		Version:           directRendezvousVersion,
@@ -98,12 +80,11 @@ func exchangeDirectCapability(
 		capability.UDPPunch = true
 		capability.UDPCandidates = append([]string(nil), udpCandidates...)
 	}
-	if err := conn.WriteJSON(capability); err != nil {
-		return directRendezvousResponse{}, fmt.Errorf("send direct capability: %w", err)
-	}
 	var result directRendezvousResponse
-	if err := conn.ReadJSON(&result); err != nil {
-		return directRendezvousResponse{}, fmt.Errorf("read direct rendezvous: %w", err)
+	if err := exchangeRendezvousJSON(
+		ctx, g, endpoint, "direct rendezvous", capability, &result,
+	); err != nil {
+		return directRendezvousResponse{}, err
 	}
 	if result.Type == "error" {
 		if result.Error == "" {
@@ -152,27 +133,4 @@ func exchangeDirectCapability(
 		return directRendezvousResponse{}, fmt.Errorf("invalid peer direct candidates: %w", err)
 	}
 	return result, nil
-}
-
-func directRendezvousURL(base, roomToken, role string) (string, error) {
-	httpURL, err := apiURL(base, "/api/direct/"+roomToken)
-	if err != nil {
-		return "", err
-	}
-	u, err := url.Parse(httpURL)
-	if err != nil {
-		return "", err
-	}
-	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	default:
-		return "", fmt.Errorf("signaling URL must use http or https: %q", base)
-	}
-	query := u.Query()
-	query.Set("role", role)
-	u.RawQuery = query.Encode()
-	return u.String(), nil
 }

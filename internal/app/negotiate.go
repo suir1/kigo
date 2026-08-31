@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/suir1/kigo/internal/routing"
@@ -163,27 +162,10 @@ func negotiateTransportRoute(
 	if !isSignalRoleClient(role) {
 		return negotiationResponse{}, errors.New("invalid negotiation role")
 	}
-	endpoint, err := negotiationURL(g.Signal, roomToken, role)
+	endpoint, err := rendezvousURL(g.Signal, "/api/negotiate/", roomToken, role)
 	if err != nil {
 		return negotiationResponse{}, err
 	}
-	conn, response, err := outboundWebSocketDialer(g).DialContext(ctx, endpoint, nil)
-	if response != nil && response.Body != nil {
-		defer response.Body.Close()
-	}
-	if err != nil {
-		return negotiationResponse{}, fmt.Errorf("connect transport negotiation: %w", err)
-	}
-	defer conn.Close()
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-stop:
-		}
-	}()
 	capability := negotiationCapability{
 		Type:         "negotiate",
 		Version:      negotiationVersion,
@@ -193,12 +175,11 @@ func negotiateTransportRoute(
 		NativeLocal:  g.Local,
 		NativeDirect: !nativeDirectDisabled(g),
 	}
-	if err := conn.WriteJSON(capability); err != nil {
-		return negotiationResponse{}, fmt.Errorf("send transport capability: %w", err)
-	}
 	var result negotiationResponse
-	if err := conn.ReadJSON(&result); err != nil {
-		return negotiationResponse{}, fmt.Errorf("read transport negotiation: %w", err)
+	if err := exchangeRendezvousJSON(
+		ctx, g, endpoint, "transport negotiation", capability, &result,
+	); err != nil {
+		return negotiationResponse{}, err
 	}
 	if result.Type == "error" {
 		if result.Error == "" {
@@ -214,29 +195,6 @@ func negotiateTransportRoute(
 
 func nativeDirectDisabled(g *globalOptions) bool {
 	return g == nil || g.NoDirect || strings.TrimSpace(g.Proxy) != ""
-}
-
-func negotiationURL(base, roomToken, role string) (string, error) {
-	httpURL, err := apiURL(base, "/api/negotiate/"+roomToken)
-	if err != nil {
-		return "", err
-	}
-	u, err := url.Parse(httpURL)
-	if err != nil {
-		return "", err
-	}
-	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	default:
-		return "", fmt.Errorf("signaling URL must use http or https: %q", base)
-	}
-	query := u.Query()
-	query.Set("role", role)
-	u.RawQuery = query.Encode()
-	return u.String(), nil
 }
 
 func isSignalRoleClient(role string) bool {
