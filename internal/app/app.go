@@ -238,7 +238,7 @@ func newRelayCommand(g *globalOptions) *cobra.Command {
 func newServeCommand() *cobra.Command {
 	var listen, webDir, publicURL, nativeRelay, nativeRelaySecret, turnURL, turnListen, turnPublicIP, turnUser, turnPass, turnSecret, turnRealm, tlsCert, tlsKey, trustedProxies, noteStore string
 	var nativeRelayCredentialTTL, turnCredentialTTL, turnEgressWindow, noteTTL time.Duration
-	var signalRequestsPerMinute, turnCredentialsPerMinute, turnMaxAllocations, turnMaxAllocationsPerUser, turnMaxAllocationsPerIP, turnMinPort, turnMaxPort int
+	var signalRequestsPerMinute, noteUpdatesPerMinute, turnCredentialsPerMinute, turnMaxAllocations, turnMaxAllocationsPerUser, turnMaxAllocationsPerIP, turnMinPort, turnMaxPort int
 	var turnMaxEgressMiB, turnMaxEgressMiBPerUser, turnMaxEgressMiBPerIP int64
 	var checkConfig bool
 	cmd := &cobra.Command{
@@ -265,6 +265,10 @@ func newServeCommand() *cobra.Command {
 			noteStore = flagEnvString(cmd, "note-store", noteStore, "KIGO_NOTE_STORE")
 			var err error
 			noteTTL, err = flagEnvDuration(cmd, "note-ttl", noteTTL, "KIGO_NOTE_TTL")
+			if err != nil {
+				return err
+			}
+			noteUpdatesPerMinute, err = flagEnvInt(cmd, "note-updates-per-minute", noteUpdatesPerMinute, "KIGO_NOTE_UPDATES_PER_MINUTE")
 			if err != nil {
 				return err
 			}
@@ -361,6 +365,7 @@ func newServeCommand() *cobra.Command {
 				TLSKey:                    tlsKey,
 				NoteStore:                 noteStore,
 				NoteTTL:                   noteTTL,
+				NoteUpdatesPerMinute:      noteUpdatesPerMinute,
 				SignalRequestsPerMinute:   signalRequestsPerMinute,
 				TrustedProxies:            trustedProxies,
 			})
@@ -404,6 +409,7 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&trustedProxies, "trusted-proxies", "", "comma-separated proxy IPs or CIDRs trusted to set X-Forwarded-For")
 	cmd.Flags().StringVar(&noteStore, "note-store", "", "directory for encrypted persistent notepad snapshots; empty keeps snapshots in memory")
 	cmd.Flags().DurationVar(&noteTTL, "note-ttl", 30*24*time.Hour, "persistent notepad lifetime after its latest update")
+	cmd.Flags().IntVar(&noteUpdatesPerMinute, "note-updates-per-minute", 240, "persistent notepad updates per source IP per minute; -1 disables")
 	cmd.Flags().BoolVar(&checkConfig, "check-config", false, "validate configuration and exit without listening")
 	return cmd
 }

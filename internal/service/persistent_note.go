@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +21,11 @@ import (
 )
 
 const (
-	defaultPersistentNoteTTL  = 30 * 24 * time.Hour
-	persistentNoteMaxClients  = 16
-	persistentNoteDiskVersion = 1
+	defaultPersistentNoteTTL              = 30 * 24 * time.Hour
+	defaultPersistentNoteUpdatesPerMinute = 240
+	persistentNoteQuarantineTTL           = 7 * 24 * time.Hour
+	persistentNoteMaxClients              = 16
+	persistentNoteDiskVersion             = 1
 )
 
 type persistentNoteHub struct {
@@ -37,8 +40,9 @@ type persistentNoteHub struct {
 }
 
 type persistentNoteClient struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
+	conn   *websocket.Conn
+	remote string
+	mu     sync.Mutex
 }
 
 type persistentNoteDiskRecord struct {
@@ -50,7 +54,8 @@ type persistentNoteDiskRecord struct {
 }
 
 func (s *Server) handlePersistentNote(w http.ResponseWriter, r *http.Request) {
-	if !s.allowRequest(r) {
+	remote := s.clientAddress(r)
+	if !s.allow(remote) {
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
@@ -64,7 +69,7 @@ func (s *Server) handlePersistentNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(note.MaxPersistentMessageSize)
-	client := &persistentNoteClient{conn: conn}
+	client := &persistentNoteClient{conn: conn, remote: remote}
 	hub, state, err := s.joinPersistentNote(roomToken+"\x00"+padToken, client)
 	if err != nil {
 		_ = client.write(note.PersistentMessage{Type: note.PersistentError, Version: note.PersistentProtocolVersion, Error: err.Error()})
@@ -85,6 +90,10 @@ func (s *Server) handlePersistentNote(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
+			return
+		}
+		if !s.allowNoteUpdate(client.remote) {
+			_ = client.writeError("persistent notepad update rate limit exceeded")
 			return
 		}
 		var message note.PersistentMessage
@@ -304,10 +313,11 @@ func (s *Server) persistentNoteStats() map[string]any {
 		hub.mu.Unlock()
 	}
 	return map[string]any{
-		"configured": s.cfg.NoteStore != "",
-		"documents":  documents,
-		"clients":    clients,
-		"ttl_ms":     s.cfg.NoteTTL.Milliseconds(),
+		"configured":         s.cfg.NoteStore != "",
+		"documents":          documents,
+		"clients":            clients,
+		"ttl_ms":             s.cfg.NoteTTL.Milliseconds(),
+		"updates_per_minute": s.cfg.NoteUpdatesPerMinute,
 	}
 }
 
@@ -473,7 +483,16 @@ func (s *Server) cleanupPersistentNoteFiles(now time.Time) {
 		return
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() {
+			continue
+		}
+		if quarantinedAt, ok := persistentNoteQuarantineTime(entry.Name()); ok {
+			if !quarantinedAt.After(now.Add(-persistentNoteQuarantineTTL)) {
+				_ = os.Remove(filepath.Join(path, entry.Name()))
+			}
+			continue
+		}
+		if filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		filePath := filepath.Join(path, entry.Name())
@@ -496,4 +515,21 @@ func (s *Server) cleanupPersistentNoteFiles(now time.Time) {
 			_ = os.Remove(filePath)
 		}
 	}
+}
+
+func persistentNoteQuarantineTime(name string) (time.Time, bool) {
+	const marker = ".json.corrupt-"
+	index := strings.Index(name, marker)
+	if index != sha256.Size*2 || index+len(marker) >= len(name) {
+		return time.Time{}, false
+	}
+	digest := name[:index]
+	if _, err := hex.DecodeString(digest); err != nil || strings.ToLower(digest) != digest {
+		return time.Time{}, false
+	}
+	nanoseconds, err := strconv.ParseInt(name[index+len(marker):], 10, 64)
+	if err != nil || nanoseconds <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, nanoseconds).UTC(), true
 }

@@ -34,6 +34,9 @@ func (s *Server) validateHTTPConfig() error {
 	if s.cfg.NoteTTL <= 0 {
 		return errors.New("persistent notepad TTL must be positive")
 	}
+	if s.cfg.NoteUpdatesPerMinute < -1 {
+		return errors.New("persistent notepad update rate must be -1 or greater")
+	}
 	if _, err := parseTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return err
 	}
