@@ -63,6 +63,7 @@ jobs:
           ./scripts/test_install.sh
           python3 -m unittest discover -s scripts -p 'test_*.py' -v
           ./scripts/nat_lab.sh --dry-run | python3 -m json.tool >/dev/null
+          node --check web/webrtc-runtime.js
           node --check web/app.js
           node --check web/note.js
           node --check scripts/smoke_public_browser.js

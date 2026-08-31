@@ -215,7 +215,7 @@ async function runTransferPeer(role, code, task, transfer) {
   const directFirst = negotiation?.pair === "web-web";
   const unorderedData = negotiation?.features?.includes(FEATURE_UNORDERED_DATA) === true;
   const parallelData = negotiation?.features?.includes(FEATURE_PARALLEL_DATA) === true;
-  if (directFirst) log("Trying LAN host-to-host before STUN and TURN...");
+  if (directFirst) log("Trying direct WebRTC; TURN will start shortly if needed...");
   await webRTC.runPeerSession({
     role,
     token,
@@ -223,6 +223,9 @@ async function runTransferPeer(role, code, task, transfer) {
     directFirst,
     unorderedData,
     parallelData,
+    onRelayStart: () => {
+      log("Direct path still pending; starting TURN in parallel...");
+    },
     onParallelFallback: () => {
       log("Parallel data paths unavailable; continuing on one direct path.");
     },
