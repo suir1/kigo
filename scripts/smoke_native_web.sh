@@ -1023,6 +1023,7 @@ async function webToWebUnorderedReorder(browser) {
 
 async function webToWebFallback(browser) {
   console.log("start web->web direct failure fallback");
+  const started = Date.now();
   const code = randomPairingCode();
   const payload = `web fallback payload ${Date.now()}`;
 
@@ -1036,7 +1037,7 @@ async function webToWebFallback(browser) {
           window.RTCPeerConnection = new Proxy(NativePeerConnection, {
             construct(Target, args) {
               peerCount++;
-              if (peerCount <= 2) {
+              if (peerCount === 1) {
                 args[0] = { ...(args[0] || {}), iceTransportPolicy: "relay" };
               }
               return Reflect.construct(Target, args);
@@ -1045,7 +1046,7 @@ async function webToWebFallback(browser) {
         });
         await page.route("**/api/ice", async (route) => {
           iceRequests++;
-          if (iceRequests <= 2) {
+          if (iceRequests === 1) {
             await route.fulfill({
               status: 200,
               contentType: "application/json",
@@ -1075,16 +1076,19 @@ async function webToWebFallback(browser) {
   const senderLog = await sender.page.locator("#log").textContent();
   const receiverLog = await receiver.page.locator("#log").textContent();
   assertEqual(received, payload, "web fallback text mismatch");
-  if (!senderLog.includes("Reconnecting 2/3") || !receiverLog.includes("Reconnecting 2/3") ||
-      !senderLog.includes("Reconnecting 3/3") || !receiverLog.includes("Reconnecting 3/3")) {
-    throw new Error(`both browser roles did not retry after direct failure\nsender=${senderLog}\nreceiver=${receiverLog}`);
+  if (!senderLog.includes("starting TURN in parallel") || !receiverLog.includes("starting TURN in parallel")) {
+    throw new Error(`both browser roles did not start delayed TURN\nsender=${senderLog}\nreceiver=${receiverLog}`);
+  }
+  if (senderLog.includes("Reconnecting 2/3") || receiverLog.includes("Reconnecting 2/3")) {
+    throw new Error(`delayed TURN unexpectedly required a serial reconnect\nsender=${senderLog}\nreceiver=${receiverLog}`);
   }
   if (!senderLog.includes("Path: TURN relay") || !receiverLog.includes("Path: TURN relay")) {
     throw new Error(`browser retry did not select TURN relay\nsender=${senderLog}\nreceiver=${receiverLog}`);
   }
-  if (sender.iceRequests() < 3 || receiver.iceRequests() < 3) {
+  if (sender.iceRequests() < 2 || receiver.iceRequests() < 2) {
     throw new Error(`browser retry did not request fresh ICE config: sender=${sender.iceRequests()} receiver=${receiver.iceRequests()}`);
   }
+  if (Date.now() - started >= 10000) throw new Error(`parallel TURN fallback took ${Date.now() - started} ms`);
   if (sender.logs.length || receiver.logs.length) {
     throw new Error(`web fallback browser logs: ${[...sender.logs, ...receiver.logs].join(" | ")}`);
   }

@@ -134,9 +134,9 @@ Implemented in this version:
 - Browser and native WebRTC sends apply DataChannel backpressure before queueing more chunks
 - Web-Web peers negotiate authenticated binary chunk frames, removing Base64 and JSON overhead from file/text payloads; native-Web peers fall back to the legacy envelope automatically
 - Kigo includes a compatibility-negotiated reliable-unordered file-channel experiment with encrypted envelope sequence reordering, but keeps it disabled by default because clean-LAN measurements were slower than the ordered single-channel path
-- Web-Web peers with a sufficient SCTP `maxMessageSize` negotiate 192 KiB chunks; legacy and native paths remain at 64 KiB
-- Web-Web ICE runs host-only LAN, STUN direct, and relay-only TURN attempts in sequence; each stage rebuilds both peer connections so fast public candidates cannot preempt a viable LAN route and fallback cannot remain stuck behind failed checks
-- Host-only Web-Web paths use 192 KiB chunks; STUN/TURN paths use 64 KiB chunks to reduce SCTP fragmentation and head-of-line delay on slower or lossy routes
+- Browser transfer negotiation supports 192 KiB chunks when SCTP `maxMessageSize` is sufficient; raced Web-Web routes deliberately keep 64 KiB chunks
+- Web-Web ICE uses a Happy Eyeballs race: host/STUN direct starts immediately, relay-only TURN starts after 800 ms, and a relay that opens first gives direct another 300 ms before the sender commits one route for both peers
+- Raced Web-Web direct and TURN paths use 64 KiB chunks to reduce SCTP fragmentation and head-of-line delay; the native-Web all-candidate path retains its existing negotiation behavior
 - Services advertising TURN also advertise the same endpoint as the first STUN server, avoiding dependence on public Google STUN for direct candidates; direct fallback logs candidate types without exposing addresses
 - Native and browser senders compress chunks independently only when gzip saves at least 1% and 32 bytes; three consecutive misses disable further attempts for that item
 - Chunk compression preserves plaintext offsets, resume hashes, mux scheduling, progress accounting, and final SHA-256 verification
