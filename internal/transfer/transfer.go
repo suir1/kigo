@@ -148,16 +148,7 @@ func (p *PreparedPath) Send(ctx context.Context, t transport.Transport, opts Sen
 	if err != nil {
 		return err
 	}
-	if opts.Logf != nil {
-		opts.Logf("secure session established")
-		opts.Logf("transfer connections: %d", session.ConnectionCount())
-		if session.StripesChunks() {
-			opts.Logf("chunk striping enabled")
-		}
-		if session.Compression() != "" {
-			opts.Logf("compression %s negotiated", session.Compression())
-		}
-	}
+	logSessionNegotiation(session, opts.Logf)
 	items, err := p.manifestItems(session.DeferredFileSHA256())
 	if err != nil {
 		return err
@@ -699,16 +690,7 @@ func SendText(ctx context.Context, t transport.Transport, text string, opts Send
 	if err != nil {
 		return err
 	}
-	if opts.Logf != nil {
-		opts.Logf("secure session established")
-		opts.Logf("transfer connections: %d", session.ConnectionCount())
-		if session.StripesChunks() {
-			opts.Logf("chunk striping enabled")
-		}
-		if session.Compression() != "" {
-			opts.Logf("compression %s negotiated", session.Compression())
-		}
-	}
+	logSessionNegotiation(session, opts.Logf)
 	progress := newStreamProgressReporter("sent", []protocol.Item{item}, nil, opts.Logf)
 	if err := session.SendManifest(ctx, []protocol.Item{item}); err != nil {
 		return err
@@ -742,16 +724,7 @@ func Receive(ctx context.Context, t transport.Transport, opts ReceiverOptions) (
 	if err != nil {
 		return nil, err
 	}
-	if opts.Logf != nil {
-		opts.Logf("secure session established")
-		opts.Logf("transfer connections: %d", session.ConnectionCount())
-		if session.StripesChunks() {
-			opts.Logf("chunk striping enabled")
-		}
-		if session.Compression() != "" {
-			opts.Logf("compression %s negotiated", session.Compression())
-		}
-	}
+	logSessionNegotiation(session, opts.Logf)
 	var manifest *protocol.Manifest
 	var store *ReceiveStore
 	var texts []ReceivedText
@@ -859,6 +832,20 @@ func logCompressionStats(session *TransferSession, logf Logger) {
 		percent,
 		stats.CompressedChunks,
 	)
+}
+
+func logSessionNegotiation(session *TransferSession, logf Logger) {
+	if session == nil || logf == nil {
+		return
+	}
+	logf("secure session established")
+	logf("transfer connections: %d", session.ConnectionCount())
+	if session.StripesChunks() {
+		logf("chunk striping enabled")
+	}
+	if session.Compression() != "" {
+		logf("compression %s negotiated", session.Compression())
+	}
 }
 
 type progressReporter struct {
