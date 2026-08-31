@@ -238,9 +238,9 @@ async function runTransferPeer(role, code, task, transfer) {
         log(`Connection interrupted. Reconnecting ${nextAttempt}/${maxAttempts}...`);
       }
     },
-  }, async ({ connectionMs, iceMode, peer, pipe }) => {
+  }, async ({ connectionMs, iceMode, peer, pipe, race }) => {
     log("WebRTC connected.");
-    const telemetry = createTransferTelemetry(peer.pcs || [peer.pc], pipe, role, { connectionMs });
+    const telemetry = createTransferTelemetry(peer.pcs || [peer.pc], pipe, role, { connectionMs, race });
     const removeTelemetryCleanup = task.addCleanup(() => telemetry.stop());
     try {
       const handshakeStarted = performance.now();
@@ -464,6 +464,7 @@ function createTransferTelemetry(peerConnections, pipe, role, phases = {}) {
       const storeMetrics = store?.metrics ? store.metrics() : {};
       const metrics = {
         role,
+        race: phases.race || null,
         payloadBytes,
         payloadDurationMs: appDurationMs,
         payloadMiBPerSecond: appDurationMs > 0 ? payloadBytes / 1024 / 1024 / (appDurationMs / 1000) : 0,
