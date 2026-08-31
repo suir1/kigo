@@ -169,6 +169,25 @@ func Addresses(candidates []Candidate) []string {
 	return out
 }
 
+func NormalizeAddresses(addresses []string) []string {
+	out := make([]string, 0, min(len(addresses), MaxCandidates))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		if len(out) >= MaxCandidates {
+			break
+		}
+		if ValidateAddress(address) != nil {
+			continue
+		}
+		if _, exists := seen[address]; exists {
+			continue
+		}
+		seen[address] = struct{}{}
+		out = append(out, address)
+	}
+	return out
+}
+
 func ValidKind(kind string) bool {
 	switch kind {
 	case KindManual, KindIPv6Global, KindLAN, KindPublic, KindLoopback, KindUnknown:

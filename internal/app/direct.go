@@ -18,7 +18,6 @@ import (
 
 const directProtocol = "kigo-direct-v1"
 const maxDirectHelloSize = 4 * 1024
-const maxDirectCandidates = directcandidate.MaxCandidates
 
 const (
 	directLANStartDelay   = 40 * time.Millisecond
@@ -698,23 +697,5 @@ func clearConnDeadline(conn net.Conn) {
 }
 
 func uniqueCandidates(candidates []string) []string {
-	seen := make(map[string]struct{}, len(candidates))
-	out := make([]string, 0, min(len(candidates), maxDirectCandidates))
-	for _, candidate := range candidates {
-		if len(out) >= maxDirectCandidates {
-			break
-		}
-		if candidate == "" {
-			continue
-		}
-		if _, _, err := net.SplitHostPort(candidate); err != nil {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		out = append(out, candidate)
-	}
-	return out
+	return directcandidate.NormalizeAddresses(candidates)
 }
