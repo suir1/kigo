@@ -75,13 +75,16 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running [`v0.1.0-alpha.4`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.4),
-deployed on 2026-07-29 from merge commit
-`12cf5269543da5471cf8e01a94274b872beae940`. `kigo version --json` reports
-Go 1.26.5 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`ae5dbd9c4de86944448fd93b3131970f9d187b928bb0bf087d0ef884606c3663`.
-The no-version installer selects this same release and verifies its published
-archive checksum before installation.
+The VPS is running the unpublished `v0.1.0-alpha.5` deployment candidate,
+deployed on 2026-08-31 from source commit
+`541b3e6b5ee003b3dced8433a6e9d8f0eac680fa` plus the pending Go 1.26.6 and
+WebRTC race-test timeout changes. Build metadata therefore reports the commit
+as `541b3e6-dirty`; this must not be described as the final alpha.5 release.
+`kigo version --json` reports Go 1.26.6 and Linux amd64. The deployed
+`/usr/local/bin/kigo` SHA-256 is
+`4dc4973417b8f39e8c7dfe2a492d26ebe014aa85c20c250cd278d769080d5d94`.
+Until alpha.5 is tagged and published, the no-version installer continues to
+select the stable [`v0.1.0-alpha.4`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.4).
 
 Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
 service uses `KIGO_NOTE_STORE=/var/lib/kigo/notes` and `KIGO_NOTE_TTL=720h`.
@@ -89,16 +92,44 @@ The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
 files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
 retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-The immediately previous `v0.1.0-alpha.3` binary is retained at
-`/usr/local/bin/kigo.backup-20260729-084644-alpha3`. To roll back both public
+The immediately previous `v0.1.0-alpha.4` binary is retained at
+`/usr/local/bin/kigo.backup-20260831-132703-alpha4`. To roll back both public
 services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260729-084644-alpha3 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260831-132703-alpha4 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
+The older alpha.3 backup remains available at
+`/usr/local/bin/kigo.backup-20260729-084644-alpha3`.
+
 ## Verification
+
+The `v0.1.0-alpha.5` deployment candidate passed these checks on 2026-08-31:
+
+- Source tests, vet, internal race tests, JavaScript syntax checks, relay smoke,
+  and the complete native/browser Chromium matrix passed. The WebRTC loopback
+  test now allows 15 seconds for local ICE/DTLS setup under the race detector.
+- Go and the Docker builder were updated from 1.26.5 to 1.26.6. `govulncheck`
+  reported no reachable vulnerabilities; two advisories affect required
+  modules but are not called by Kigo.
+- Five platform archives, SHA-256 manifests, and the CycloneDX SBOM passed
+  `scripts/verify_release.sh`. The Linux amd64 archive was rechecked before
+  upload, and the candidate passed `serve --check-config` with the production
+  environment before replacement.
+- Strict-TLS Chromium transferred encrypted text and a random 256 KiB file over
+  forced TURN. Both peers selected `relay/relay` UDP and both checksums matched.
+  Redacted evidence is in
+  `artifacts/vps-alpha5-20260831-forced-turn-1328/matrix.json`.
+- A native-native random 1 MiB transfer disabled direct TCP and LAN discovery,
+  negotiated `service-native-relay` with temporary credentials, and used four
+  striped connections through `106.53.170.243:5140`. Source and destination
+  both had SHA-256
+  `6c0300f302eb24662ad7751064003fab5d93dff6749068abdb95daad4dedeea1`.
+- The alpha.5 client route and doctor probes both returned `ok`. After testing,
+  both services were active with zero restarts, TURN had no active allocations
+  or quota failures, and the post-deploy warning-level journal was empty.
 
 The `v0.1.0-alpha.4` deployment passed these checks on 2026-07-29:
 

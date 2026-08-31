@@ -235,7 +235,8 @@ func newDataChannelTransportPairWithFactory(
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// The race detector can stretch local ICE/DTLS setup beyond five seconds.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	var right *DataChannelTransport
 	select {
