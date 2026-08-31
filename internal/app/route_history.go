@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/suir1/kigo/internal/localstate"
 	"github.com/suir1/kigo/internal/transport"
 )
 
@@ -161,7 +162,7 @@ func recordRouteObservation(path string, observation routeObservation) error {
 	}
 	routeHistoryMu.Lock()
 	defer routeHistoryMu.Unlock()
-	return withRouteHistoryLock(path, func() error {
+	return localstate.WithFileLock(path, func() error {
 		history, err := loadRouteHistory(path)
 		if err != nil {
 			history = newRouteHistory()
@@ -227,7 +228,7 @@ func recordRouteObservation(path string, observation routeObservation) error {
 		profile.LastSeen = now
 		history.Profiles[scopeID] = profile
 		pruneRouteHistoryProfiles(&history, scopeID)
-		return writeRouteHistory(path, history)
+		return localstate.WriteJSON(path, history)
 	})
 }
 
@@ -668,63 +669,6 @@ func loadRouteHistory(path string) (routeHistoryFile, error) {
 		history.Profiles = map[string]routeHistoryProfile{}
 	}
 	return history, nil
-}
-
-func writeRouteHistory(path string, history routeHistoryFile) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".route-history-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	encoder := json.NewEncoder(temp)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(history); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, path)
-}
-
-func withRouteHistoryLock(path string, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	lockPath := path + ".lock"
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_ = lock.Close()
-			defer os.Remove(lockPath)
-			return fn()
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > 30*time.Second {
-			_ = os.Remove(lockPath)
-			continue
-		}
-		if time.Now().After(deadline) {
-			return errors.New("route history lock timed out")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 }
 
 func validHistoryRoute(kind string) bool {

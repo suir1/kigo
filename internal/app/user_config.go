@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/suir1/kigo/internal/localstate"
 )
 
 const userConfigVersion = 1
@@ -123,47 +125,8 @@ func sanitizeUserConfig(config *userConfig) {
 
 func saveUserConfig(config userConfig) error {
 	sanitizeUserConfig(&config)
-	path := userConfigPath()
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config directory: %w", err)
-	}
-	file, err := os.CreateTemp(dir, ".config-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create config file: %w", err)
-	}
-	tempPath := file.Name()
-	cleanup := func() {
-		_ = file.Close()
-		_ = os.Remove(tempPath)
-	}
-	if err := file.Chmod(0o600); err != nil {
-		cleanup()
-		return fmt.Errorf("set config permissions: %w", err)
-	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(config); err != nil {
-		cleanup()
-		return fmt.Errorf("encode user config: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("sync user config: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tempPath)
-		return fmt.Errorf("close user config: %w", err)
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			_ = os.Remove(tempPath)
-			return fmt.Errorf("replace user config: %w", err)
-		}
-		if retryErr := os.Rename(tempPath, path); retryErr != nil {
-			_ = os.Remove(tempPath)
-			return fmt.Errorf("replace user config: %w", retryErr)
-		}
+	if err := localstate.WriteJSON(userConfigPath(), config); err != nil {
+		return fmt.Errorf("save user config: %w", err)
 	}
 	return nil
 }
