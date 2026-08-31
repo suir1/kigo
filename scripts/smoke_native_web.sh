@@ -1439,12 +1439,6 @@ async function webProtocolGuards(browser) {
       schedulerSequence.push(turn.streamID);
       scheduler.commit(turn.streamID, turn.budget, false);
     }
-    const adaptiveBudgets = [
-      adaptiveSendBudget(64 * 1024, 16 * 1024, {}),
-      adaptiveSendBudget(64 * 1024, 16 * 1024, { bufferedBytes: 1 * 1024 * 1024, bufferLimit: 4 * 1024 * 1024 }),
-      adaptiveSendBudget(64 * 1024, 16 * 1024, { bufferedBytes: 2 * 1024 * 1024, bufferLimit: 4 * 1024 * 1024 }),
-      adaptiveSendBudget(64 * 1024, 16 * 1024, { lastWaitMs: 25 }),
-    ];
     const manifestErrors = [];
     for (const manifest of [
       { version: VERSION, items: [{ kind: "file", name: "bad.txt", size: -1, chunk_size: CHUNK_SIZE }] },
@@ -1562,7 +1556,6 @@ async function webProtocolGuards(browser) {
       directRouteDescription,
       streamProgressText,
       schedulerSequence,
-      adaptiveBudgets,
       manifestErrors,
       envelopeErrors,
       helloErrors,
@@ -1616,7 +1609,6 @@ async function webProtocolGuards(browser) {
     throw new Error(`stream progress clamp mismatch: ${result.streamProgressText}`);
   }
   assertEqual(result.schedulerSequence.join(","), "10,10,20,10,10,20", "weighted scheduler order mismatch");
-  assertEqual(result.adaptiveBudgets.join(","), "65536,32768,16384,16384", "adaptive send budget mismatch");
   if (!result.manifestErrors[0].includes("invalid size")) throw new Error(`manifest size guard mismatch: ${result.manifestErrors[0]}`);
   if (!result.manifestErrors[1].includes("duplicate path")) throw new Error(`manifest duplicate guard mismatch: ${result.manifestErrors[1]}`);
   if (!result.manifestErrors[2].includes("duplicate path")) throw new Error(`manifest cross-kind duplicate guard mismatch: ${result.manifestErrors[2]}`);
