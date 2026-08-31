@@ -853,6 +853,12 @@ async function webToWebFile(browser) {
   if (!pathLines.length) throw new Error(`web-web benchmark did not report selected path\n${senderLog}\n${receiverLog}`);
   const bytes = fs.statSync(src).size;
   if (!senderMetrics || !receiverMetrics) throw new Error(`web-web benchmark did not expose performance telemetry\nsender=${senderLog}\nreceiver=${receiverLog}`);
+  for (const [role, metrics] of [["sender", senderMetrics], ["receiver", receiverMetrics]]) {
+    if (metrics.race?.selectedMode !== "direct" || !Number.isFinite(metrics.race?.directReadyMs) ||
+        !Number.isFinite(metrics.race?.selectedMs)) {
+      throw new Error(`web-web ${role} telemetry did not record the direct race: ${JSON.stringify(metrics.race)}`);
+    }
+  }
   if (senderMetrics.payloadBytes !== bytes || receiverMetrics.payloadBytes !== bytes) {
     throw new Error(`web-web telemetry payload mismatch: sender=${senderMetrics.payloadBytes} receiver=${receiverMetrics.payloadBytes} bytes=${bytes}`);
   }
@@ -1075,6 +1081,8 @@ async function webToWebFallback(browser) {
   const received = await receiver.page.locator("#textOutput").textContent();
   const senderLog = await sender.page.locator("#log").textContent();
   const receiverLog = await receiver.page.locator("#log").textContent();
+  const senderMetrics = await sender.page.evaluate(() => window.__kigoLastTransferMetrics || null);
+  const receiverMetrics = await receiver.page.evaluate(() => window.__kigoLastTransferMetrics || null);
   assertEqual(received, payload, "web fallback text mismatch");
   if (!senderLog.includes("starting TURN in parallel") || !receiverLog.includes("starting TURN in parallel")) {
     throw new Error(`both browser roles did not start delayed TURN\nsender=${senderLog}\nreceiver=${receiverLog}`);
@@ -1087,6 +1095,14 @@ async function webToWebFallback(browser) {
   }
   if (sender.iceRequests() < 2 || receiver.iceRequests() < 2) {
     throw new Error(`browser retry did not request fresh ICE config: sender=${sender.iceRequests()} receiver=${receiver.iceRequests()}`);
+  }
+  for (const [role, metrics] of [["sender", senderMetrics], ["receiver", receiverMetrics]]) {
+    const race = metrics?.race;
+    if (race?.selectedMode !== "relay" || !Number.isFinite(race.relayStartedMs) ||
+        !Number.isFinite(race.relayReadyMs) || !Number.isFinite(race.selectedMs) ||
+        race.relayStartedMs < 600) {
+      throw new Error(`web fallback ${role} telemetry did not record the delayed TURN race: ${JSON.stringify(race)}`);
+    }
   }
   if (Date.now() - started >= 10000) throw new Error(`parallel TURN fallback took ${Date.now() - started} ms`);
   if (sender.logs.length || receiver.logs.length) {

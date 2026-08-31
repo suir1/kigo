@@ -348,6 +348,19 @@
     async function connectRacedPeer(config) {
       const { role, token, task, protocol, onRelayStart = () => {} } = config;
       const relayToken = await iceRaceToken(token, "relay");
+      const raceStarted = performance.now();
+      const race = {
+        enabled: true,
+        relayDelayMs: raceDelayMs,
+        directPreferenceMs,
+        relayStartedMs: null,
+        directReadyMs: null,
+        relayReadyMs: null,
+        commitMode: "",
+        commitStartedMs: null,
+        selectedMode: "",
+        selectedMs: null,
+      };
       const states = new Map();
       let settled = false;
       let committing = false;
@@ -367,9 +380,12 @@
         const finish = (candidate) => {
           if (settled) return;
           settled = true;
+          race.selectedMode = candidate.iceMode;
+          race.selectedMs = performance.now() - raceStarted;
           cancelTimers();
           cancelLosers(candidate.iceMode);
           candidate.peer.signalTokens = [token, relayToken];
+          candidate.race = { ...race };
           resolve(candidate);
         };
         const failRace = () => {
@@ -390,6 +406,8 @@
         const commit = async (candidate) => {
           if (settled || committing) return;
           committing = true;
+          race.commitMode = candidate.iceMode;
+          race.commitStartedMs = performance.now() - raceStarted;
           try {
             candidate.control.send("kigo_route_commit", candidate.iceMode);
             const ack = await candidate.control.wait("kigo_route_ack", signalTimeoutMs);
@@ -407,6 +425,7 @@
           }
           const state = states.get(mode);
           Object.assign(state, { status: "ready", peer: candidate.peer, candidate });
+          race[`${mode}ReadyMs`] = performance.now() - raceStarted;
           if (role === "receiver") {
             candidate.control.wait("kigo_route_commit", signalTimeoutMs).then((message) => {
               if (settled) return;
@@ -462,6 +481,7 @@
         };
         const startRelay = () => {
           if (settled || states.has("relay")) return;
+          race.relayStartedMs = performance.now() - raceStarted;
           Promise.resolve(onRelayStart({ delayMs: raceDelayMs })).catch(() => {});
           start("relay", relayToken);
         };
@@ -496,7 +516,7 @@
               iceMode: "all",
               unorderedData: Boolean(config.unorderedData) && !Boolean(config.parallelData),
             });
-          const { iceMode, signalToken, connectTimeoutMs, pendingPrimaryMessages } = connected;
+          const { iceMode, signalToken, connectTimeoutMs, pendingPrimaryMessages, race } = connected;
           peer = connected.peer;
           const useParallelData = Boolean(config.parallelData) && iceMode !== "relay";
           const primaryClose = peer.close;
@@ -532,7 +552,7 @@
             : [peer.dataDC].filter(Boolean);
           pipe = makeTransport(peer.dc, dataChannels, pendingPrimaryMessages);
           removePipeCleanup = task.addCleanup(() => pipe.close());
-          return await handler({ attempt, connectionMs, iceMode, peer, pipe });
+          return await handler({ attempt, connectionMs, iceMode, peer, pipe, race: race || null });
         } catch (err) {
           if (!shouldRetry(err, peer?.signal || err?.retrySignal, attempt, task)) throw err;
           await onRetry({

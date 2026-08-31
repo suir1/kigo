@@ -152,7 +152,7 @@ Implemented in this version:
 - Native file/text persistence, `.kigopart` resume state, integrity checks, and final rename are centralized behind `ReceiveStore`
 - Browser and native CLI transfers show progress with transferred bytes, percentage, and transfer rate
 - Native WebRTC close waits briefly for queued DataChannel bytes so final acknowledgements are not dropped
-- Browser transfer logs keep local performance telemetry: selected ICE pair, RTC byte rate, RTT, DataChannel backpressure, AES/compression time, and OPFS queue/write time; telemetry is never sent to the service
+- Browser transfer logs keep local performance telemetry: selected ICE pair, direct/TURN race timing, RTC byte rate, RTT, DataChannel backpressure, AES/compression time, and OPFS queue/write time; telemetry is never sent to the service
 - Browser DataChannel backpressure uses a bounded 4 MiB high-water mark with `bufferedamountlow` wakeups, keeping the transfer queue bounded without polling-only waits
 - Route history is partitioned into hashed network scopes so failures and throughput learned on one Wi-Fi, hotspot, VPN, or routed interface do not affect another
 - `route` and `doctor` attach live signaling/relay latency probes to candidates and apply bounded score adjustments
