@@ -75,11 +75,11 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running [`v0.1.0-alpha.5`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.5),
-deployed on 2026-08-31 from merge commit
-`ad603227b6788dcc6b8a8b0d781b5633e3c65ec5`. `kigo version --json` reports
+The VPS is running [`v0.1.0-alpha.6`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.6),
+deployed on 2026-09-01 from merge commit
+`d02856e71bcc339e2392b892b92001f701a962b0`. `kigo version --json` reports
 Go 1.26.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`a2a60a4c92b7996886768f51d3107fb6529b3c1d333a89465150ea4706bb6434`.
+`f16e212dac52bc44722da52f40265a56ff59e9c0124fd1275435b27eaa9b4396`.
 The no-version installer selects this same release and verifies its published
 archive checksum before installation.
 
@@ -89,22 +89,48 @@ The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
 files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
 retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-The immediately previous `v0.1.0-alpha.4` binary is retained at
-`/usr/local/bin/kigo.backup-20260831-132703-alpha4`. To roll back both public
+The immediately previous `v0.1.0-alpha.5` binary is retained at
+`/usr/local/bin/kigo.backup-20260901-063740-alpha5`. To roll back both public
 services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260831-132703-alpha4 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260901-063740-alpha5 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
-The older alpha.3 backup remains available at
+The older alpha.4 backup remains available at
+`/usr/local/bin/kigo.backup-20260831-132703-alpha4`, and the alpha.3 backup at
 `/usr/local/bin/kigo.backup-20260729-084644-alpha3`.
 The pre-release alpha.5 candidate is retained at
 `/usr/local/bin/kigo.backup-20260831-135903-alpha5-dirty` for diagnosis only;
-use the published alpha.4 backup for a production rollback.
+use the published alpha.5 backup above for a production rollback.
 
 ## Verification
+
+The `v0.1.0-alpha.6` deployment passed these checks on 2026-09-01:
+
+- Pull requests 55 and 56 each passed all eight CI jobs. The first added the
+  delayed direct/TURN WebRTC race and synchronized route commit; the second
+  added local-only race timing telemetry and assertions for direct and forced
+  TURN outcomes.
+- The release workflow repeated Windows direct checks, source tests,
+  vulnerability scanning, five-platform archive verification, CycloneDX SBOM
+  generation, and provenance/SBOM attestations. Downloaded release assets also
+  passed `scripts/verify_release.sh` before deployment.
+- The released Linux amd64 binary passed `serve --check-config` with the
+  production environment before replacing alpha.5.
+- Strict-TLS Chromium transferred encrypted text and a random 256 KiB file
+  through forced TURN. Both peers selected `relay/relay` UDP and both checksums
+  matched. Redacted evidence is in
+  `artifacts/vps-alpha6-official-20260901-forced-turn/matrix.json`.
+- The released macOS arm64 client transferred a random 1 MiB file through the
+  temporary-credential `service-native-relay` route using four connections.
+  Source and destination both had SHA-256
+  `1828f11ef94234e45819a85149b06b797671c68ccfcf7b2c38ab73df73d7205b`.
+- The alpha.6 client route and doctor probes both returned `ok`. After testing,
+  both services were active with zero automatic restarts, signaling rooms and
+  TURN allocations were empty, quota failures were zero, and the warning-level
+  journal was empty.
 
 The `v0.1.0-alpha.5` deployment passed these checks on 2026-08-31:
 
