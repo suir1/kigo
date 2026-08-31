@@ -17,24 +17,16 @@ import (
 func TestRelayPairsAndForwardsFrames(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	senderCh := make(chan result, 1)
 	receiverCh := make(chan result, 1)
 	go func() {
-		tp, err := Join(ctx, ln.Addr().String(), "room-token", "sender", "")
+		tp, err := Join(ctx, addr, "room-token", "sender", "")
 		senderCh <- result{tp: tp, err: err}
 	}()
 	go func() {
-		tp, err := Join(ctx, ln.Addr().String(), "room-token", "receiver", "")
+		tp, err := Join(ctx, addr, "room-token", "receiver", "")
 		receiverCh <- result{tp: tp, err: err}
 	}()
 
@@ -58,15 +50,7 @@ func TestRelayPairsAndForwardsFrames(t *testing.T) {
 func TestRelayExchangesPeerDirectAddress(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	senderCh := make(chan struct {
 		result JoinResult
@@ -77,14 +61,14 @@ func TestRelayExchangesPeerDirectAddress(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		result, err := JoinWithOptions(ctx, JoinOptions{Addr: ln.Addr().String(), RoomToken: "room-token", Role: "sender", Direct: "127.0.0.1:1111"})
+		result, err := JoinWithOptions(ctx, JoinOptions{Addr: addr, RoomToken: "room-token", Role: "sender", Direct: "127.0.0.1:1111"})
 		senderCh <- struct {
 			result JoinResult
 			err    error
 		}{result: result, err: err}
 	}()
 	go func() {
-		result, err := JoinWithOptions(ctx, JoinOptions{Addr: ln.Addr().String(), RoomToken: "room-token", Role: "receiver", Direct: "127.0.0.1:2222"})
+		result, err := JoinWithOptions(ctx, JoinOptions{Addr: addr, RoomToken: "room-token", Role: "receiver", Direct: "127.0.0.1:2222"})
 		receiverCh <- struct {
 			result JoinResult
 			err    error
@@ -112,15 +96,7 @@ func TestRelayExchangesPeerDirectAddress(t *testing.T) {
 func TestRelayExchangesPeerDirectCandidates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	type joinResult struct {
 		result JoinResult
@@ -129,7 +105,7 @@ func TestRelayExchangesPeerDirectCandidates(t *testing.T) {
 	senderCh := make(chan joinResult, 1)
 	go func() {
 		result, err := JoinWithOptions(ctx, JoinOptions{
-			Addr:             ln.Addr().String(),
+			Addr:             addr,
 			RoomToken:        "candidate-room",
 			Role:             "sender",
 			DirectCandidates: []string{"10.0.0.2:1111", "[fd00::2]:1111", "invalid"},
@@ -142,7 +118,7 @@ func TestRelayExchangesPeerDirectCandidates(t *testing.T) {
 		senderCh <- joinResult{result: result, err: err}
 	}()
 	receiver, err := JoinWithOptions(ctx, JoinOptions{
-		Addr:             ln.Addr().String(),
+		Addr:             addr,
 		RoomToken:        "candidate-room",
 		Role:             "receiver",
 		DirectCandidates: []string{"10.0.0.3:2222"},
@@ -175,15 +151,7 @@ func TestProbePublicAddressUsesDirectListenerPort(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	relayListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, relayListener); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	relayAddr := startTestRelay(t, ctx)
 	directListener, err := netreuse.ListenTCP(ctx, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +162,7 @@ func TestProbePublicAddressUsesDirectListenerPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicAddress, err := ProbePublicAddress(ctx, PublicProbeOptions{
-		Addr:      relayListener.Addr().String(),
+		Addr:      relayAddr,
 		RoomToken: "public-probe-room",
 		Role:      "sender",
 		LocalPort: directPort,
@@ -214,15 +182,7 @@ func TestProbePublicAddressUsesDirectListenerPort(t *testing.T) {
 func TestRelayExchangesRouteChoiceCapabilityAndPreference(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	type joinResult struct {
 		result JoinResult
@@ -231,7 +191,7 @@ func TestRelayExchangesRouteChoiceCapabilityAndPreference(t *testing.T) {
 	senderCh := make(chan joinResult, 1)
 	go func() {
 		result, err := JoinWithOptions(ctx, JoinOptions{
-			Addr:             ln.Addr().String(),
+			Addr:             addr,
 			RoomToken:        "route-choice-room",
 			Role:             "sender",
 			Capabilities:     []string{CapabilityRouteChoiceV1, CapabilityRouteChoiceV1},
@@ -240,7 +200,7 @@ func TestRelayExchangesRouteChoiceCapabilityAndPreference(t *testing.T) {
 		senderCh <- joinResult{result: result, err: err}
 	}()
 	receiver, err := JoinWithOptions(ctx, JoinOptions{
-		Addr:             ln.Addr().String(),
+		Addr:             addr,
 		RoomToken:        "route-choice-room",
 		Role:             "receiver",
 		Capabilities:     []string{CapabilityRouteChoiceV1},
@@ -276,15 +236,7 @@ func TestRelayExchangesRouteChoiceCapabilityAndPreference(t *testing.T) {
 func TestRelaySynchronizesBidirectionalDirectPunch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	type joinResult struct {
 		result JoinResult
@@ -293,7 +245,7 @@ func TestRelaySynchronizesBidirectionalDirectPunch(t *testing.T) {
 	senderCh := make(chan joinResult, 1)
 	go func() {
 		result, err := JoinWithOptions(ctx, JoinOptions{
-			Addr:             ln.Addr().String(),
+			Addr:             addr,
 			RoomToken:        "bidirectional-punch-room",
 			Role:             "sender",
 			DirectCandidates: []string{"127.0.0.1:4101"},
@@ -306,7 +258,7 @@ func TestRelaySynchronizesBidirectionalDirectPunch(t *testing.T) {
 		senderCh <- joinResult{result: result, err: err}
 	}()
 	receiver, err := JoinWithOptions(ctx, JoinOptions{
-		Addr:             ln.Addr().String(),
+		Addr:             addr,
 		RoomToken:        "bidirectional-punch-room",
 		Role:             "receiver",
 		DirectCandidates: []string{"127.0.0.1:4102"},
@@ -347,15 +299,7 @@ func TestRelaySynchronizesBidirectionalDirectPunch(t *testing.T) {
 func TestRelayOmitsBidirectionalPunchForLegacyPeer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	type joinResult struct {
 		result JoinResult
@@ -364,7 +308,7 @@ func TestRelayOmitsBidirectionalPunchForLegacyPeer(t *testing.T) {
 	senderCh := make(chan joinResult, 1)
 	go func() {
 		result, err := JoinWithOptions(ctx, JoinOptions{
-			Addr:             ln.Addr().String(),
+			Addr:             addr,
 			RoomToken:        "legacy-punch-room",
 			Role:             "sender",
 			DirectCandidates: []string{"127.0.0.1:4201"},
@@ -377,7 +321,7 @@ func TestRelayOmitsBidirectionalPunchForLegacyPeer(t *testing.T) {
 		senderCh <- joinResult{result: result, err: err}
 	}()
 	receiver, err := JoinWithOptions(ctx, JoinOptions{
-		Addr:             ln.Addr().String(),
+		Addr:             addr,
 		RoomToken:        "legacy-punch-room",
 		Role:             "receiver",
 		DirectCandidates: []string{"127.0.0.1:4202"},
@@ -417,19 +361,11 @@ func hasCapabilityForTest(capabilities []string, target string) bool {
 func TestRelayRejectsDuplicateWaitingRole(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	firstCh := make(chan error, 1)
 	go func() {
-		tp, err := Join(ctx, ln.Addr().String(), "room-token", "sender", "")
+		tp, err := Join(ctx, addr, "room-token", "sender", "")
 		if err == nil {
 			defer tp.Close()
 		}
@@ -437,11 +373,11 @@ func TestRelayRejectsDuplicateWaitingRole(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond)
 
-	if _, err := Join(ctx, ln.Addr().String(), "room-token", "sender", ""); err == nil {
+	if _, err := Join(ctx, addr, "room-token", "sender", ""); err == nil {
 		t.Fatal("duplicate sender joined")
 	}
 
-	receiver, err := Join(ctx, ln.Addr().String(), "room-token", "receiver", "")
+	receiver, err := Join(ctx, addr, "room-token", "receiver", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,15 +390,7 @@ func TestRelayRejectsDuplicateWaitingRole(t *testing.T) {
 func TestRelayPairsConnectionsByIndex(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	type indexedResult struct {
 		index  int
@@ -475,7 +403,7 @@ func TestRelayPairsConnectionsByIndex(t *testing.T) {
 			role, index := role, index
 			go func() {
 				result, err := JoinWithOptions(ctx, JoinOptions{
-					Addr:            ln.Addr().String(),
+					Addr:            addr,
 					RoomToken:       "indexed-room",
 					Role:            role,
 					ConnectionIndex: index,
@@ -522,15 +450,7 @@ func TestRelayPairsConnectionsByIndex(t *testing.T) {
 func TestRelayNegotiatesDifferentConnectionCounts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 
 	senderCh := make(chan struct {
 		result JoinResult
@@ -538,7 +458,7 @@ func TestRelayNegotiatesDifferentConnectionCounts(t *testing.T) {
 	}, 1)
 	go func() {
 		result, err := JoinWithOptions(ctx, JoinOptions{
-			Addr:            ln.Addr().String(),
+			Addr:            addr,
 			RoomToken:       "count-room",
 			Role:            "sender",
 			ConnectionCount: 4,
@@ -549,7 +469,7 @@ func TestRelayNegotiatesDifferentConnectionCounts(t *testing.T) {
 		}{result: result, err: err}
 	}()
 	receiver, err := JoinWithOptions(ctx, JoinOptions{
-		Addr:            ln.Addr().String(),
+		Addr:            addr,
 		RoomToken:       "count-room",
 		Role:            "receiver",
 		ConnectionCount: 2,
@@ -631,17 +551,9 @@ func TestJoinBundleInheritsPrimaryDialer(t *testing.T) {
 func TestRelayRejectsInvalidConnectionIndex(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		if err := NewServer().Serve(ctx, ln); err != nil {
-			t.Errorf("relay serve failed: %v", err)
-		}
-	}()
+	addr := startTestRelay(t, ctx)
 	if _, err := JoinWithOptions(ctx, JoinOptions{
-		Addr:            ln.Addr().String(),
+		Addr:            addr,
 		RoomToken:       "invalid-index",
 		Role:            "sender",
 		ConnectionIndex: 2,
