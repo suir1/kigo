@@ -44,13 +44,6 @@ type textSendTaskRequest struct {
 
 func (textSendTaskRequest) taskKind() string { return "text-send" }
 
-type textReceiveTaskRequest struct {
-	Code      string
-	OutputDir string
-}
-
-func (textReceiveTaskRequest) taskKind() string { return "text-recv" }
-
 type doctorTaskRequest struct {
 	Timeout   time.Duration
 	JSON      bool

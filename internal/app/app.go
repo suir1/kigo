@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -503,7 +502,11 @@ func newTextCommand(g *globalOptions) *cobra.Command {
 			return runClientTask(
 				withInterrupt(cmd.Context()),
 				g,
-				textReceiveTaskRequest{Code: args[0], OutputDir: filepath.Clean(".")},
+				receiveTaskRequest{
+					Code:       args[0],
+					OutputDir:  ".",
+					OnConflict: string(transfer.ConflictOverwrite),
+				},
 				newClientTaskOutput(cmd.OutOrStdout(), cmd.ErrOrStderr(), nil),
 			)
 		},
