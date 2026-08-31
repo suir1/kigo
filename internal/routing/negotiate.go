@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 )
 
@@ -138,7 +139,7 @@ func Choose(sender, receiver Capability, serverRelay string) Response {
 func CommonFeatures(left, right []string) []string {
 	var common []string
 	for _, supported := range []string{FeatureParallelData, FeatureUnorderedData} {
-		if contains(left, supported) && contains(right, supported) {
+		if slices.Contains(left, supported) && slices.Contains(right, supported) {
 			common = append(common, supported)
 		}
 	}
@@ -155,15 +156,6 @@ func Pair(left, right string) string {
 		return ""
 	}
 	return left + "-" + right
-}
-
-func contains(features []string, target string) bool {
-	for _, feature := range features {
-		if feature == target {
-			return true
-		}
-	}
-	return false
 }
 
 func relaysMatch(left, right string) bool {
