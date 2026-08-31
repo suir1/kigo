@@ -90,22 +90,6 @@ func plural(count int, singular, multiple string) string {
 	return multiple
 }
 
-func SendFile(ctx context.Context, t transport.Transport, path string, opts SenderOptions) error {
-	return SendPath(ctx, t, path, opts)
-}
-
-func SendPath(ctx context.Context, t transport.Transport, path string, opts SenderOptions) error {
-	prepared, err := PreparePath(path)
-	if err != nil {
-		return err
-	}
-	return prepared.Send(ctx, t, opts)
-}
-
-func PreparePath(path string) (*PreparedPath, error) {
-	return PreparePathWithOptions(path, PrepareOptions{Symlinks: SymlinkFollow})
-}
-
 func PreparePathWithOptions(path string, opts PrepareOptions) (*PreparedPath, error) {
 	symlinks, err := ParseSymlinkMode(string(opts.Symlinks))
 	if err != nil {
@@ -989,27 +973,6 @@ func totalItemSize(items []protocol.Item) int64 {
 	for _, item := range items {
 		if item.Size > 0 {
 			total += item.Size
-		}
-	}
-	return total
-}
-
-func totalResumeOffset(items []protocol.Item, offsets map[int]int64) int64 {
-	var total int64
-	for i, offset := range offsets {
-		if i < 0 || i >= len(items) {
-			continue
-		}
-		total += clampInt64(offset, 0, items[i].Size)
-	}
-	return total
-}
-
-func totalResumeEntries(entries []protocol.ResumeEntry) int64 {
-	var total int64
-	for _, entry := range entries {
-		if entry.Offset > 0 {
-			total += entry.Offset
 		}
 	}
 	return total
