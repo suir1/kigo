@@ -838,6 +838,7 @@ async function receiveTransfer(pipe, session, task) {
   let sendSeq = 0;
   let receiveProgress = null;
   let terminalMessageSent = false;
+  let receivedStreamVerified = false;
   const receivedHashers = new Map();
   const receiveChunkLog = createChunkProgressLogger("received");
   try {
@@ -941,6 +942,7 @@ async function receiveTransfer(pipe, session, task) {
             throw error;
           }
         }
+        receivedStreamVerified = receivedHashers.size > 0;
         const finalizeStarted = performance.now();
         const completedFiles = await fileStore.finalize();
         session.telemetry?.addDuration("finalizeMs", performance.now() - finalizeStarted);
@@ -1012,12 +1014,18 @@ async function receiveTransfer(pipe, session, task) {
       }
     }
   } catch (err) {
+    if (receivedStreamVerified && err?.code === "integrity" && /sha256 mismatch/i.test(String(err.message || ""))) {
+      const storageError = new Error(`stored file sha256 mismatch after received stream verified: ${err.message}`);
+      storageError.code = "storage_integrity";
+      storageError.noRetry = true;
+      err = storageError;
+    }
     if (!terminalMessageSent && !task.canceled) {
       try {
         const message = String(err?.message || err || "receiver failed").slice(0, 512);
         await sendEncrypted(pipe, session, sendSeq++, {
           type: "error",
-          code: err?.code === "integrity" || /sha256 mismatch|size mismatch/i.test(message) ? "integrity" : "receive",
+          code: err?.code === "integrity" || err?.code === "storage_integrity" || /sha256 mismatch|size mismatch/i.test(message) ? "integrity" : "receive",
           message,
           at: Date.now(),
         });
@@ -1390,7 +1398,12 @@ async function createOPFSFileStore(manifest, streamPlan) {
         syncWorkerClosed = true;
       }
       for (const [itemID, state] of states) {
-        const file = await state.handle.getFile();
+        // Reacquire the handle after closing the sync worker. Some browsers
+        // cache a stale File snapshot on the original handle instance.
+        const freshRoot = await navigator.storage.getDirectory();
+        const freshDirectory = await freshRoot.getDirectoryHandle(OPFS_RECEIVE_DIR);
+        const freshHandle = await freshDirectory.getFileHandle(state.fileName);
+        const file = await freshHandle.getFile();
         await verifyItemFile(state.item, file);
         completed.set(itemID, { blob: file, parts: null });
       }
