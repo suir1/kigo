@@ -75,14 +75,15 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running diagnostic build `v0.1.0-dev.20260918.integrity1`, deployed
+The VPS is running diagnostic build `v0.1.0-dev.20260918.integrity2`, deployed
 on 2026-09-18 from merge commit
-`bd0efbc981a153cc2bddcdb0036bc9b46b3a6333`. `kigo version --json` reports Go
+`fe86089b398b73f0d04cea6f94190e2a649643d9`. `kigo version --json` reports Go
 1.26.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`5f820c619b94a81c3420a825db361e04041cf53a33f1da5164150b076ef729cf`.
-This is a diagnostic build rather than a release tag; the previous alpha.7
+`b4f1b6ff5b178dc421d685790253ef215e19e5862cbb768a87888a2002515fdc`.
+This is a diagnostic build rather than a release tag; the previous integrity1
 binary is retained at
-`/usr/local/bin/kigo.backup-20260918-025646-alpha7` for rollback.
+`/usr/local/bin/kigo.backup-20260918-032934-integrity1` for rollback, with the
+alpha.7 backup retained separately.
 
 Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
 service uses `KIGO_NOTE_STORE=/var/lib/kigo/notes` and `KIGO_NOTE_TTL=720h`.
@@ -121,6 +122,7 @@ The integrity diagnostic deployment passed these checks on 2026-09-18:
 - CI passed all eight checks for pull request 64, including Go/protocol, Chromium, Firefox, WebKit, Linux, Windows, container, and release-layout checks.
 - Strict-TLS Chromium transferred encrypted text and a random 256 KiB file through forced TURN; both checksums matched. Evidence is in `artifacts/vps-integrity1-forced-turn/matrix.json`.
 - After verification, both services were restarted and `/api/health` reported the diagnostic version, zero active rooms, zero locked rooms, zero pending signals, and zero TURN allocations.
+- The follow-up `integrity2` build closes OPFS sync access handles before reading the final file snapshot, avoiding stale snapshots in browsers that keep `getFile()` behind an open worker handle. The exact `Aidoku-RealESRGAN-feather-band40.ipa` file passed local Chromium and WebKit verification before deployment; the public forced-TURN file smoke also passed after deployment.
 
 The `v0.1.0-alpha.6` deployment passed these checks on 2026-09-01:
 
