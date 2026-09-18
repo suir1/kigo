@@ -118,9 +118,9 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		if hsts {
 			header.Set("Strict-Transport-Security", "max-age=31536000")
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			header.Set("Cache-Control", "no-store")
-		}
+		// The web UI is served from the same binary as the signaling API. Do not
+		// let browsers keep an older app.js or worker after a server upgrade.
+		header.Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})
 }
