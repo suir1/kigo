@@ -75,13 +75,14 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running [`v0.1.0-alpha.7`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.7),
-deployed on 2026-09-18 from merge commit
-`0d7014e780a79566889430803bbac284e2599c4e`. `kigo version --json` reports
-Go 1.26.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`1f3045b524eabf2a1228a399f1910c979c13d3fa9a6ee1af1ff0378160a6cbea`.
-The no-version installer selects this same release and verifies its published
-archive checksum before installation.
+The VPS is running diagnostic build `v0.1.0-dev.20260918.integrity1`, deployed
+on 2026-09-18 from merge commit
+`bd0efbc981a153cc2bddcdb0036bc9b46b3a6333`. `kigo version --json` reports Go
+1.26.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
+`5f820c619b94a81c3420a825db361e04041cf53a33f1da5164150b076ef729cf`.
+This is a diagnostic build rather than a release tag; the previous alpha.7
+binary is retained at
+`/usr/local/bin/kigo.backup-20260918-025646-alpha7` for rollback.
 
 Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
 service uses `KIGO_NOTE_STORE=/var/lib/kigo/notes` and `KIGO_NOTE_TTL=720h`.
@@ -114,6 +115,12 @@ The `v0.1.0-alpha.7` deployment passed these checks on 2026-09-18:
 - Strict-TLS Chromium transferred encrypted text and a random 256 KiB file through forced TURN. Both peers selected relay candidates and both checksums matched. Evidence is in `artifacts/vps-alpha7-forced-turn/matrix.json`.
 - Strict-TLS Chromium transferred a random 11.1 MiB file through the natural ICE path, which selected authenticated `relay/relay` UDP in this network, and matched the source SHA-256. Evidence is in `artifacts/vps-alpha7-direct-large/matrix.json`.
 - After replacement, both systemd services were active and `/api/health` reported version `v0.1.0-alpha.7`, zero active rooms, zero TURN allocations, and zero quota failures.
+
+The integrity diagnostic deployment passed these checks on 2026-09-18:
+
+- CI passed all eight checks for pull request 64, including Go/protocol, Chromium, Firefox, WebKit, Linux, Windows, container, and release-layout checks.
+- Strict-TLS Chromium transferred encrypted text and a random 256 KiB file through forced TURN; both checksums matched. Evidence is in `artifacts/vps-integrity1-forced-turn/matrix.json`.
+- After verification, both services were restarted and `/api/health` reported the diagnostic version, zero active rooms, zero locked rooms, zero pending signals, and zero TURN allocations.
 
 The `v0.1.0-alpha.6` deployment passed these checks on 2026-09-01:
 
