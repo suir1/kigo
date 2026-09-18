@@ -574,7 +574,10 @@ refresh the same tab and kigo reclaims the original signaling role with the same
 file whose safe relative name, declared size, and full SHA-256 match the stored partial. The browser keeps the
 random signaling reconnect token in `sessionStorage`; it disappears when the tab closes and is never included
 in the pairing URL. Completed files remain as a seven-day cache so downloads can stream directly from browser
-storage. Browsers without OPFS can reconnect in the same tab but request offset zero.
+storage. Browsers without OPFS can reconnect in the same tab but request offset zero. The sender's 100% progress
+means all payload chunks have left the sender; it then waits for the receiver to flush storage, verify the final
+SHA-256, and acknowledge completion. Integrity failures are reported as terminal errors instead of retrying the
+same transfer room.
 
 Browser notepad drafts are separate from OPFS transfer data. They are encrypted with a code-derived AES-128-GCM
 key before entering origin-local storage, retain at most three recent entries as quota permits, and expire after
@@ -582,7 +585,7 @@ seven days. The pairing code, role, and pad must match to decrypt a draft. These
 service's encrypted snapshot: clearing browser storage does not remove the shared document, which remains
 recoverable until the service's default 30-day sliding TTL expires.
 
-The smoke script builds a temporary `kigo` binary, starts a local service plus optional built-in TURN on an available localhost port, and drives a Playwright browser. It covers browser-side streaming SHA-256 plus transfer/notepad protocol guards, gzip transfers in both native/web directions, native-to-web file and text receive, same-code browser refresh plus OPFS resume without restarting the native sender, wrong reconnect-token rejection, web-to-native file, text, and conflict-skip sends, web-to-web file and text transfer, direct-ICE failure with synchronized TURN fallback, asynchronous native/browser and web/web notepad editing and recovery, encrypted browser-draft page recovery, notepad deep links and protocol mismatch rejection, web cancellation/error handling, web-to-native resume from an existing `.kigopart`, native directory-to-web ZIP download with `.gitignore`, empty-directory, and symlink metadata checks, and Chromium folder upload to native.
+The smoke script builds a temporary `kigo` binary, starts a local service plus optional built-in TURN on an available localhost port, and drives a Playwright browser. It covers browser-side streaming SHA-256 plus transfer/notepad protocol guards, gzip transfers in both native/web directions, native-to-web file and text receive, same-code browser refresh plus OPFS resume without restarting the native sender, wrong reconnect-token rejection, web-to-native file, text, and conflict-skip sends, web-to-web file and text transfer, direct-ICE failure with synchronized TURN fallback, asynchronous native/browser and web/web notepad editing and recovery, encrypted browser-draft page recovery, notepad deep links and protocol mismatch rejection, web cancellation/error handling, receiver integrity-failure propagation, web-to-native resume from an existing `.kigopart`, native directory-to-web ZIP download with `.gitignore`, empty-directory, and symlink metadata checks, and Chromium folder upload to native.
 
 Set `PLAYWRIGHT_BROWSER=chromium|firefox|webkit` and optionally `KIGO_SMOKE_FILTER` with one or more comma-separated labels. Chromium uses the installed Chrome channel by default; set `PLAYWRIGHT_CHANNEL=` (or legacy `PLAYWRIGHT_CHROMIUM_CHANNEL=`) to use its bundled runtime. `KIGO_SMOKE_TURN_ENABLED=0` disables the local TURN server, while `KIGO_TURN_LISTEN` and `KIGO_TURN_PUBLIC_IP` override its test endpoint. `KIGO_SMOKE_NATIVE_INTERFACE` binds native peers to one interface. `KIGO_SMOKE_BROWSER_ARGS` accepts comma-separated Chromium launch arguments for ICE diagnostics.
 
@@ -596,7 +599,8 @@ verifies the downloaded SHA-256, and requires the selected local candidate type 
 `matrix.json` records only browser version, authenticated TURN availability, duration, byte/checksum results,
 candidate types/protocols, and address-free failure diagnostics. Use `--dry-run` to validate configuration.
 `KIGO_PUBLIC_BROWSER_SCENARIOS` selects `text`, `file`, or both; `KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS` controls
-the per-scenario timeout. This test consumes TURN bandwidth and should use a quota-limited test deployment.
+the per-scenario timeout. `KIGO_PUBLIC_BROWSER_FILE_BYTES` overrides the default 256 KiB file size for larger
+network regression runs. This test consumes TURN bandwidth and should use a quota-limited test deployment.
 
 Native TCP relay smoke:
 

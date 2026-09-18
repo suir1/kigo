@@ -48,6 +48,10 @@ function validateOptions(raw) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 600) {
     throw new Error("timeout seconds must be an integer between 1 and 600");
   }
+  const fileBytes = Number(process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES || 256 * 1024);
+  if (!Number.isSafeInteger(fileBytes) || fileBytes < 1 || fileBytes > 512 * 1024 * 1024) {
+    throw new Error("KIGO_PUBLIC_BROWSER_FILE_BYTES must be an integer between 1 and 536870912");
+  }
   return {
     url: url.origin + url.pathname.replace(/\/$/, ""),
     engine: raw.engine,
@@ -56,6 +60,7 @@ function validateOptions(raw) {
     ignoreTLSErrors: raw.ignore_tls_errors === '1',
     scenarios,
     timeoutMS: timeoutSeconds * 1000,
+    fileBytes,
     artifactDir: path.resolve(raw.artifact_dir || "artifacts/public-browser-matrix"),
     dryRun: raw.dryRun,
   };
@@ -242,7 +247,14 @@ async function runFile(browser, options) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-"));
   const source = path.join(work, "payload.bin");
   const received = path.join(work, "received.bin");
-  fs.writeFileSync(source, crypto.randomBytes(256 * 1024));
+  const output = fs.createWriteStream(source);
+  let remaining = options.fileBytes;
+  while (remaining > 0) {
+    const size = Math.min(remaining, 1024 * 1024);
+    if (!output.write(crypto.randomBytes(size))) await new Promise((resolve) => output.once("drain", resolve));
+    remaining -= size;
+  }
+  await new Promise((resolve, reject) => output.end((err) => err ? reject(err) : resolve()));
   let receiver;
   let sender;
   try {

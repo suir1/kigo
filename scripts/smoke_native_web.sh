@@ -1691,6 +1691,38 @@ async function webErrorHandling(browser) {
   console.log("ok web error handling");
 }
 
+async function webReceiverIntegrityFailure(browser) {
+  console.log("start web receiver integrity failure");
+  await browser.addInitScript(() => {
+    globalThis.__kigoSmokeHooks = {
+      beforeReceiveFinalize() {
+        const err = new Error("sha256 mismatch for smoke.bin: got deadbeef, want expected");
+        err.code = "integrity";
+        throw err;
+      },
+    };
+  });
+  const code = randomPairingCode();
+  const receiver = await startWebReceiver(browser, code);
+  const sender = await newPage(browser, baseURL);
+  await sender.page.click('button[data-tab="text"]');
+  await sender.page.fill("#textInput", "integrity failure smoke");
+  await sender.page.fill("#textCode", code);
+  await sender.page.click("#sendText");
+  await sender.page.waitForFunction(() => {
+    const log = document.querySelector("#log")?.textContent || "";
+    return log.includes("sha256 mismatch for smoke.bin");
+  }, null, { timeout: 5000 });
+  const senderLog = await sender.page.locator("#log").textContent();
+  if (senderLog.includes("Reconnecting 2/3")) {
+    throw new Error(`integrity failure incorrectly triggered reconnect\n${senderLog}`);
+  }
+  if (senderLog.includes("receiver did not confirm completion")) {
+    throw new Error(`integrity failure was not propagated\n${senderLog}`);
+  }
+  console.log("ok web receiver integrity failure");
+}
+
 async function webCancelHandling(browser) {
   console.log("start web cancel handling");
   const { page, logs } = await newPage(browser);
@@ -1906,6 +1938,7 @@ async function webFolderToNative(browser) {
     await runSmoke(browser, "web->web note", 45000, webToWebNote);
     await runSmoke(browser, "web persistent note isolation", 20000, webPersistentNoteIsolation);
     await runSmoke(browser, "web error handling", 10000, webErrorHandling);
+    await runSmoke(browser, "web receiver integrity failure", 10000, webReceiverIntegrityFailure);
     await runSmoke(browser, "web cancel handling", 10000, webCancelHandling);
     await runSmoke(browser, "web->native resume file", 45000, webToNativeResumeFile);
     await runSmoke(browser, "web->native corrupt resume file", 45000, webToNativeCorruptResumeFile);

@@ -574,7 +574,7 @@
     }
 
     function shouldRetry(err, signal, attempt, task) {
-      if (task.canceled || attempt >= reconnectAttempts || !signal?.reconnectSupported()) return false;
+      if (task.canceled || err?.noRetry || attempt >= reconnectAttempts || !signal?.reconnectSupported()) return false;
       const message = String(err?.message || err || "").toLowerCase();
       return ["closed", "failed", "timed out", "connection"].some((part) => message.includes(part));
     }
