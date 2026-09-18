@@ -187,6 +187,9 @@ function friendlyError(err) {
   if (lower.includes("signaling connection closed")) {
     return "Signaling connection closed. Check that the other side is still waiting and try again.";
   }
+  if (err?.code === "integrity" || lower.includes("sha256 mismatch") || lower.includes("size mismatch")) {
+    return `Receiver integrity check failed: ${message}`;
+  }
   if (lower.includes("transfer connection closed") || lower.includes("datachannel")) {
     return "Transfer connection closed. Automatic same-code reconnect was exhausted.";
   }
@@ -745,8 +748,15 @@ async function sendTransfer(pipe, session, items, task) {
   }
   logCompressionStats(session);
   await sendEncrypted(pipe, session, seq++, { type: "done", at: Date.now() });
+  log("All chunks sent. Waiting for receiver verification...");
   await session.telemetry?.markNetworkComplete();
   const complete = await recvEncrypted(pipe, session);
+  if (complete.type === "error") {
+    const error = new Error(complete.message || "receiver rejected transfer");
+    error.code = complete.code || "receiver";
+    error.noRetry = true;
+    throw error;
+  }
   if (complete.type !== "complete") throw new Error("receiver did not confirm completion");
 }
 
@@ -803,6 +813,7 @@ async function receiveTransfer(pipe, session, task) {
   let streamTracker = null;
   let sendSeq = 0;
   let receiveProgress = null;
+  let terminalMessageSent = false;
   const receiveChunkLog = createChunkProgressLogger("received");
   try {
     for (;;) {
@@ -878,6 +889,12 @@ async function receiveTransfer(pipe, session, task) {
         });
       } else if (msg.type === "done") {
         await session.telemetry?.markNetworkComplete();
+        const smokeHooks = ["127.0.0.1", "localhost", "::1"].includes(location.hostname)
+          ? globalThis.__kigoSmokeHooks
+          : null;
+        if (smokeHooks?.beforeReceiveFinalize) {
+          await smokeHooks.beforeReceiveFinalize({ manifest });
+        }
         const finalizeStarted = performance.now();
         const completedFiles = await fileStore.finalize();
         session.telemetry?.addDuration("finalizeMs", performance.now() - finalizeStarted);
@@ -943,10 +960,24 @@ async function receiveTransfer(pipe, session, task) {
           log("Download started automatically. Use the link above if your browser blocked it.");
         }
         await sendEncrypted(pipe, session, sendSeq++, { type: "complete", at: Date.now() });
+        terminalMessageSent = true;
         await fileStore.cleanup();
         return;
       }
     }
+  } catch (err) {
+    if (!terminalMessageSent && !task.canceled) {
+      try {
+        const message = String(err?.message || err || "receiver failed").slice(0, 512);
+        await sendEncrypted(pipe, session, sendSeq++, {
+          type: "error",
+          code: err?.code === "integrity" || /sha256 mismatch|size mismatch/i.test(message) ? "integrity" : "receive",
+          message,
+          at: Date.now(),
+        });
+      } catch {}
+    }
+    throw err;
   } finally {
     if (fileStore) {
       try {
@@ -2232,7 +2263,9 @@ async function verifyItemParts(item, parts) {
     for (const part of parts) hasher.update(part);
     const got = hex(hasher.digest());
     if (got !== item.sha256.toLowerCase()) {
-      throw new Error(`sha256 mismatch for ${item.name}`);
+      const error = new Error(`sha256 mismatch for ${item.name}: got ${got}, want ${item.sha256.toLowerCase()}`);
+      error.code = "integrity";
+      throw error;
     }
   }
 }
@@ -2244,7 +2277,9 @@ async function verifyItemFile(item, file) {
   if (item.sha256) {
     const got = await fileSHA256(file);
     if (got !== item.sha256.toLowerCase()) {
-      throw new Error(`sha256 mismatch for ${item.name}`);
+      const error = new Error(`sha256 mismatch for ${item.name}: got ${got}, want ${item.sha256.toLowerCase()}`);
+      error.code = "integrity";
+      throw error;
     }
   }
 }
