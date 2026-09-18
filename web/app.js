@@ -10,6 +10,7 @@ const OPFS_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const OPFS_WRITE_QUEUE_HIGH_BYTES = 4 * 1024 * 1024;
 const OPFS_WRITE_QUEUE_LOW_BYTES = 1 * 1024 * 1024;
 const OPFS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const BROWSER_MEMORY_RECOVERY_LIMIT = 128 * 1024 * 1024;
 const PROGRESS_RENDER_INTERVAL_MS = 100;
 const CHUNK_LOG_INTERVAL_MS = 1000;
 const PERFORMANCE_SAMPLE_INTERVAL_MS = 500;
@@ -839,6 +840,7 @@ async function receiveTransfer(pipe, session, task) {
   let receiveProgress = null;
   let terminalMessageSent = false;
   let receivedStreamVerified = false;
+  let recoveryParts = null;
   const receivedHashers = new Map();
   const receiveChunkLog = createChunkProgressLogger("received");
   try {
@@ -878,6 +880,14 @@ async function receiveTransfer(pipe, session, task) {
           receiveProgress = createStreamProgress("Receiving", manifest, fileStore.offsets());
           receiveProgress.show("accepted resume");
         }
+        const fileItems = manifest.items
+          .map((item, itemID) => ({ item, itemID }))
+          .filter(({ item }) => item.kind === "file");
+        const totalFileBytes = fileItems.reduce((sum, { item }) => sum + item.size, 0);
+        if (fileStore.persistent && totalFileBytes <= BROWSER_MEMORY_RECOVERY_LIMIT &&
+            fileItems.every(({ itemID }) => fileStore.offsets().get(itemID) === 0)) {
+          recoveryParts = new Map(fileItems.map(({ itemID }) => [itemID, []]));
+        }
         for (const [itemID, item] of manifest.items.entries()) {
           if (item.kind === "file" && item.sha256 && fileStore.offsets().get(itemID) === 0) {
             receivedHashers.set(itemID, new SHA256());
@@ -899,6 +909,7 @@ async function receiveTransfer(pipe, session, task) {
         const dataLength = data.length;
         if (item.kind === "file") {
           receivedHashers.get(msg.item)?.update(data);
+          recoveryParts?.get(msg.item)?.push(data.slice());
           await fileStore.writeChunk(msg.item, msg.offset, data);
         }
         if (item.kind === "text") {
@@ -944,7 +955,25 @@ async function receiveTransfer(pipe, session, task) {
         }
         receivedStreamVerified = receivedHashers.size > 0;
         const finalizeStarted = performance.now();
-        const completedFiles = await fileStore.finalize();
+        let completedFiles;
+        let recoveredFromMemory = false;
+        try {
+          completedFiles = await fileStore.finalize();
+        } catch (err) {
+          if (!fileStore.persistent || !receivedStreamVerified || !recoveryParts || err?.code !== "integrity") {
+            throw err;
+          }
+          const recovered = new Map();
+          for (const [itemID, parts] of recoveryParts) {
+            const item = manifest.items[itemID];
+            await verifyItemParts(item, parts);
+            recovered.set(itemID, { blob: new Blob(parts), parts });
+          }
+          completedFiles = recovered;
+          recoveredFromMemory = true;
+          log("OPFS final snapshot failed after stream verification; recovered from verified memory copy.");
+          await fileStore.discard?.();
+        }
         session.telemetry?.addDuration("finalizeMs", performance.now() - finalizeStarted);
         const zipEntries = [];
         const fileLinks = [];
@@ -1010,6 +1039,7 @@ async function receiveTransfer(pipe, session, task) {
         await sendEncrypted(pipe, session, sendSeq++, { type: "complete", at: Date.now() });
         terminalMessageSent = true;
         await fileStore.cleanup();
+        if (recoveredFromMemory) log("Transfer complete using memory recovery; download is verified.");
         return;
       }
     }
@@ -1408,6 +1438,14 @@ async function createOPFSFileStore(manifest, streamPlan) {
         completed.set(itemID, { blob: file, parts: null });
       }
       return completed;
+    },
+    async discard() {
+      await closeStore();
+      for (const state of states.values()) {
+        try {
+          await directory.removeEntry(state.fileName);
+        } catch {}
+      }
     },
     metrics() {
       let writeMs = 0;
