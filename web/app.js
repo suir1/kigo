@@ -190,6 +190,9 @@ function friendlyError(err) {
   if (err?.code === "integrity" || lower.includes("sha256 mismatch") || lower.includes("size mismatch")) {
     return `Receiver integrity check failed: ${message}`;
   }
+  if (err?.code === "source_changed") {
+    return `Source file changed while it was being sent: ${message}`;
+  }
   if (lower.includes("transfer connection closed") || lower.includes("datachannel")) {
     return "Transfer connection closed. Automatic same-code reconnect was exhausted.";
   }
@@ -694,6 +697,7 @@ async function sendTransfer(pipe, session, items, task) {
       done: offset >= item.file.size,
       ended: false,
       compressionState: {},
+      sentHasher: offset === 0 && manifest.items[i].sha256 ? new SHA256() : null,
     });
   }
   for (const state of fileStates) {
@@ -721,6 +725,7 @@ async function sendTransfer(pipe, session, items, task) {
     const readStarted = performance.now();
     const chunk = new Uint8Array(await state.item.file.slice(state.offset, state.offset + turn.budget).arrayBuffer());
     session.telemetry?.addDuration("sourceReadMs", performance.now() - readStarted);
+    state.sentHasher?.update(chunk);
     const encoded = await encodeTransferChunk(chunk, session, state.compressionState);
     await sendEncryptedChunk(pipe, session, seq++, {
       type: "chunk",
@@ -745,6 +750,25 @@ async function sendTransfer(pipe, session, items, task) {
       await sendEncrypted(pipe, session, seq++, { type: "stream_end", item: state.itemIndex, stream: state.streamID, at: Date.now() });
     }
     scheduler.commit(state.streamID, chunk.length, state.done);
+  }
+  for (const state of fileStates) {
+    if (!state.sentHasher || !manifest.items[state.itemIndex].sha256) continue;
+    const got = hex(state.sentHasher.digest());
+    const want = manifest.items[state.itemIndex].sha256.toLowerCase();
+    if (got !== want) {
+      const error = new Error(`source changed during transfer for ${state.item.name}: got ${got}, want ${want}`);
+      error.code = "source_changed";
+      error.noRetry = true;
+      try {
+        await sendEncrypted(pipe, session, seq++, {
+          type: "error",
+          code: error.code,
+          message: error.message,
+          at: Date.now(),
+        });
+      } catch {}
+      throw error;
+    }
   }
   logCompressionStats(session);
   await sendEncrypted(pipe, session, seq++, { type: "done", at: Date.now() });
@@ -814,6 +838,7 @@ async function receiveTransfer(pipe, session, task) {
   let sendSeq = 0;
   let receiveProgress = null;
   let terminalMessageSent = false;
+  const receivedHashers = new Map();
   const receiveChunkLog = createChunkProgressLogger("received");
   try {
     for (;;) {
@@ -852,6 +877,11 @@ async function receiveTransfer(pipe, session, task) {
           receiveProgress = createStreamProgress("Receiving", manifest, fileStore.offsets());
           receiveProgress.show("accepted resume");
         }
+        for (const [itemID, item] of manifest.items.entries()) {
+          if (item.kind === "file" && item.sha256 && fileStore.offsets().get(itemID) === 0) {
+            receivedHashers.set(itemID, new SHA256());
+          }
+        }
         await session.telemetry?.start();
       } else if (msg.type === "stream_open") {
         if (!manifest) throw new Error("stream_open arrived before manifest");
@@ -867,6 +897,7 @@ async function receiveTransfer(pipe, session, task) {
         const data = await decodeTransferChunk(encoded, msg.encoding || "", session);
         const dataLength = data.length;
         if (item.kind === "file") {
+          receivedHashers.get(msg.item)?.update(data);
           await fileStore.writeChunk(msg.item, msg.offset, data);
         }
         if (item.kind === "text") {
@@ -887,6 +918,11 @@ async function receiveTransfer(pipe, session, task) {
           total: item.size,
           complete: receivedBytes >= item.size,
         });
+      } else if (msg.type === "error") {
+        const error = new Error(msg.message || "sender rejected transfer");
+        error.code = msg.code || "sender";
+        error.noRetry = true;
+        throw error;
       } else if (msg.type === "done") {
         await session.telemetry?.markNetworkComplete();
         const smokeHooks = ["127.0.0.1", "localhost", "::1"].includes(location.hostname)
@@ -894,6 +930,16 @@ async function receiveTransfer(pipe, session, task) {
           : null;
         if (smokeHooks?.beforeReceiveFinalize) {
           await smokeHooks.beforeReceiveFinalize({ manifest });
+        }
+        for (const [itemID, hasher] of receivedHashers) {
+          const item = manifest.items[itemID];
+          const got = hex(hasher.digest());
+          const want = item.sha256.toLowerCase();
+          if (got !== want) {
+            const error = new Error(`received payload sha256 mismatch for ${item.name}: got ${got}, want ${want}`);
+            error.code = "integrity";
+            throw error;
+          }
         }
         const finalizeStarted = performance.now();
         const completedFiles = await fileStore.finalize();
