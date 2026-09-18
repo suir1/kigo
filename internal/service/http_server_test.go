@@ -47,7 +47,7 @@ func TestSecurityHeadersCoverAssetsAndDisableAPICaching(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", name, got, want)
 		}
 	}
-	if got := root.Header().Get("Cache-Control"); got != "" {
+	if got := root.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("asset cache control = %q", got)
 	}
 
