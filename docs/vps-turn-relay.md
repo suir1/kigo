@@ -75,11 +75,11 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running [`v0.1.0-alpha.6`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.6),
-deployed on 2026-09-01 from merge commit
-`d02856e71bcc339e2392b892b92001f701a962b0`. `kigo version --json` reports
+The VPS is running [`v0.1.0-alpha.7`](https://github.com/suir1/kigo/releases/tag/v0.1.0-alpha.7),
+deployed on 2026-09-18 from merge commit
+`0d7014e780a79566889430803bbac284e2599c4e`. `kigo version --json` reports
 Go 1.26.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`f16e212dac52bc44722da52f40265a56ff59e9c0124fd1275435b27eaa9b4396`.
+`1f3045b524eabf2a1228a399f1910c979c13d3fa9a6ee1af1ff0378160a6cbea`.
 The no-version installer selects this same release and verifies its published
 archive checksum before installation.
 
@@ -89,23 +89,31 @@ The notes directory is owned by `kigo:kigo` with mode `0700`; encrypted snapshot
 files use mode `0600`. The service unit also declares `StateDirectory=kigo` and
 retains `ReadWritePaths=/var/lib/kigo` under `ProtectSystem=strict`.
 
-The immediately previous `v0.1.0-alpha.5` binary is retained at
-`/usr/local/bin/kigo.backup-20260901-063740-alpha5`. To roll back both public
+The immediately previous `v0.1.0-alpha.6` binary is retained at
+`/usr/local/bin/kigo.backup-20260918-093301-alpha6`. To roll back both public
 services while preserving encrypted snapshots:
 
 ```sh
-ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260901-063740-alpha5 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
+ssh kiko_vps 'sudo install -m 0755 /usr/local/bin/kigo.backup-20260918-093301-alpha6 /usr/local/bin/kigo && sudo systemctl restart kigo-relay.service kigo-public.service'
 ssh kiko_vps '/usr/local/bin/kigo version --json && systemctl is-active kigo-relay.service kigo-public.service'
 ```
 
-The older alpha.4 backup remains available at
-`/usr/local/bin/kigo.backup-20260831-132703-alpha4`, and the alpha.3 backup at
+The older alpha.5 backup remains available at
+`/usr/local/bin/kigo.backup-20260901-063740-alpha5`, alpha.4 at
+`/usr/local/bin/kigo.backup-20260831-132703-alpha4`, and alpha.3 at
 `/usr/local/bin/kigo.backup-20260729-084644-alpha3`.
 The pre-release alpha.5 candidate is retained at
 `/usr/local/bin/kigo.backup-20260831-135903-alpha5-dirty` for diagnosis only;
 use the published alpha.5 backup above for a production rollback.
 
 ## Verification
+
+The `v0.1.0-alpha.7` deployment passed these checks on 2026-09-18:
+
+- Pull request 61 passed all eight CI jobs, including Go/protocol, Chromium, Firefox, WebKit, Linux, Windows, container, and release-layout checks. The release workflow also passed source tests, vulnerability scanning, artifact verification, provenance, SBOM, and publication.
+- Strict-TLS Chromium transferred encrypted text and a random 256 KiB file through forced TURN. Both peers selected relay candidates and both checksums matched. Evidence is in `artifacts/vps-alpha7-forced-turn/matrix.json`.
+- Strict-TLS Chromium transferred a random 11.1 MiB file through the natural direct path and matched the source SHA-256. Evidence is in `artifacts/vps-alpha7-direct-large/matrix.json`.
+- After replacement, both systemd services were active and `/api/health` reported version `v0.1.0-alpha.7`, zero active rooms, zero TURN allocations, and zero quota failures.
 
 The `v0.1.0-alpha.6` deployment passed these checks on 2026-09-01:
 
