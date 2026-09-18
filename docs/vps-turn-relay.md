@@ -75,14 +75,14 @@ globally, 2 GiB per credential, and 4 GiB per source IP per one-hour window.
 
 ## Current deployment
 
-The VPS is running diagnostic build `v0.1.0-dev.20260918.integrity2`, deployed
+The VPS is running diagnostic build `v0.1.0-dev.20260918.cache1`, deployed
 on 2026-09-18 from merge commit
-`fe86089b398b73f0d04cea6f94190e2a649643d9`. `kigo version --json` reports Go
+`cd612966af3523f066c7ff3c0b4fa308dd4c7552`. `kigo version --json` reports Go
 1.26.6 and Linux amd64. The deployed `/usr/local/bin/kigo` SHA-256 is
-`b4f1b6ff5b178dc421d685790253ef215e19e5862cbb768a87888a2002515fdc`.
-This is a diagnostic build rather than a release tag; the previous integrity1
+`e54b2f4083960691b30d0facbc7b11cbab2536157d3484dd0db44610954885ce`.
+This is a diagnostic build rather than a release tag; the previous integrity2
 binary is retained at
-`/usr/local/bin/kigo.backup-20260918-032934-integrity1` for rollback, with the
+`/usr/local/bin/kigo.backup-20260918-034526-integrity2` for rollback, with the
 alpha.7 backup retained separately.
 
 Both `kigo-public.service` and `kigo-relay.service` load this binary. The public
@@ -123,6 +123,7 @@ The integrity diagnostic deployment passed these checks on 2026-09-18:
 - Strict-TLS Chromium transferred encrypted text and a random 256 KiB file through forced TURN; both checksums matched. Evidence is in `artifacts/vps-integrity1-forced-turn/matrix.json`.
 - After verification, both services were restarted and `/api/health` reported the diagnostic version, zero active rooms, zero locked rooms, zero pending signals, and zero TURN allocations.
 - The follow-up `integrity2` build closes OPFS sync access handles before reading the final file snapshot, avoiding stale snapshots in browsers that keep `getFile()` behind an open worker handle. The exact `Aidoku-RealESRGAN-feather-band40.ipa` file passed local Chromium and WebKit verification before deployment; the public forced-TURN file smoke also passed after deployment.
+- The follow-up `cache1` build marks all web assets `Cache-Control: no-store`, so a server upgrade cannot leave an already cached `app.js` or OPFS worker in a newly opened page.
 
 The `v0.1.0-alpha.6` deployment passed these checks on 2026-09-01:
 
