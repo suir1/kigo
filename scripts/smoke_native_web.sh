@@ -628,7 +628,7 @@ async function browserCorruptPersistentResume(browser) {
   const src = path.join(dir, "persistent-corrupt.bin");
   const dst = path.join(dir, "downloaded.bin");
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(src, crypto.randomBytes(1024 * 1024));
+  fs.writeFileSync(src, crypto.randomBytes(11686291));
   const item = {
     name: path.basename(src),
     size: fs.statSync(src).size,
@@ -642,7 +642,7 @@ async function browserCorruptPersistentResume(browser) {
     const directory = await root.getDirectoryHandle(OPFS_RECEIVE_DIR, { create: true });
     const handle = await directory.getFileHandle(`${key}.part`, { create: true });
     const writer = await handle.createWritable();
-    await writer.write(new Uint8Array(120000).fill(0x78));
+    await writer.write(new Uint8Array(entry.size).fill(0x78));
     await writer.close();
   }, item);
 
