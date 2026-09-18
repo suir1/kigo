@@ -112,7 +112,7 @@ The `v0.1.0-alpha.7` deployment passed these checks on 2026-09-18:
 
 - Pull request 61 passed all eight CI jobs, including Go/protocol, Chromium, Firefox, WebKit, Linux, Windows, container, and release-layout checks. The release workflow also passed source tests, vulnerability scanning, artifact verification, provenance, SBOM, and publication.
 - Strict-TLS Chromium transferred encrypted text and a random 256 KiB file through forced TURN. Both peers selected relay candidates and both checksums matched. Evidence is in `artifacts/vps-alpha7-forced-turn/matrix.json`.
-- Strict-TLS Chromium transferred a random 11.1 MiB file through the natural direct path and matched the source SHA-256. Evidence is in `artifacts/vps-alpha7-direct-large/matrix.json`.
+- Strict-TLS Chromium transferred a random 11.1 MiB file through the natural ICE path, which selected authenticated `relay/relay` UDP in this network, and matched the source SHA-256. Evidence is in `artifacts/vps-alpha7-direct-large/matrix.json`.
 - After replacement, both systemd services were active and `/api/health` reported version `v0.1.0-alpha.7`, zero active rooms, zero TURN allocations, and zero quota failures.
 
 The `v0.1.0-alpha.6` deployment passed these checks on 2026-09-01:
