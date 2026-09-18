@@ -576,8 +576,10 @@ random signaling reconnect token in `sessionStorage`; it disappears when the tab
 in the pairing URL. Completed files remain as a seven-day cache so downloads can stream directly from browser
 storage. Browsers without OPFS can reconnect in the same tab but request offset zero. The sender's 100% progress
 means all payload chunks have left the sender; it then waits for the receiver to flush storage, verify the final
-SHA-256, and acknowledge completion. Integrity failures are reported as terminal errors instead of retrying the
-same transfer room.
+SHA-256, and acknowledge completion. A zero-offset browser send also hashes the bytes actually read from the
+selected `File` during transmission; a receiver hashes decrypted chunks before final storage verification. This
+separates source changes, transport corruption, and browser storage failures. Integrity failures are reported as
+terminal errors instead of retrying the same transfer room.
 
 Browser notepad drafts are separate from OPFS transfer data. They are encrypted with a code-derived AES-128-GCM
 key before entering origin-local storage, retain at most three recent entries as quota permits, and expire after
@@ -587,7 +589,7 @@ recoverable until the service's default 30-day sliding TTL expires.
 
 The smoke script builds a temporary `kigo` binary, starts a local service plus optional built-in TURN on an available localhost port, and drives a Playwright browser. It covers browser-side streaming SHA-256 plus transfer/notepad protocol guards, gzip transfers in both native/web directions, native-to-web file and text receive, same-code browser refresh plus OPFS resume without restarting the native sender, wrong reconnect-token rejection, web-to-native file, text, and conflict-skip sends, web-to-web file and text transfer, direct-ICE failure with synchronized TURN fallback, asynchronous native/browser and web/web notepad editing and recovery, encrypted browser-draft page recovery, notepad deep links and protocol mismatch rejection, web cancellation/error handling, receiver integrity-failure propagation, web-to-native resume from an existing `.kigopart`, native directory-to-web ZIP download with `.gitignore`, empty-directory, and symlink metadata checks, and Chromium folder upload to native.
 
-Set `PLAYWRIGHT_BROWSER=chromium|firefox|webkit` and optionally `KIGO_SMOKE_FILTER` with one or more comma-separated labels. Chromium uses the installed Chrome channel by default; set `PLAYWRIGHT_CHANNEL=` (or legacy `PLAYWRIGHT_CHROMIUM_CHANNEL=`) to use its bundled runtime. `KIGO_SMOKE_TURN_ENABLED=0` disables the local TURN server, while `KIGO_TURN_LISTEN` and `KIGO_TURN_PUBLIC_IP` override its test endpoint. `KIGO_SMOKE_NATIVE_INTERFACE` binds native peers to one interface. `KIGO_SMOKE_BROWSER_ARGS` accepts comma-separated Chromium launch arguments for ICE diagnostics.
+Set `PLAYWRIGHT_BROWSER=chromium|firefox|webkit` and optionally `KIGO_SMOKE_FILTER` with one or more comma-separated labels. Chromium uses the installed Chrome channel by default; set `PLAYWRIGHT_CHANNEL=` (or legacy `PLAYWRIGHT_CHROMIUM_CHANNEL=`) to use its bundled runtime. `KIGO_SMOKE_TURN_ENABLED=0` disables the local TURN server, while `KIGO_TURN_LISTEN` and `KIGO_TURN_PUBLIC_IP` override its test endpoint. `KIGO_SMOKE_NATIVE_INTERFACE` binds native peers to one interface. `KIGO_SMOKE_BROWSER_ARGS` accepts comma-separated Chromium launch arguments for ICE diagnostics. `KIGO_SMOKE_WEB_WEB_SOURCE=/absolute/file` sends an existing file through the browser-to-browser scenario for exact-file regression testing.
 
 `smoke_browser_matrix.sh` runs a compact cross-engine subset. When `KIGO_BROWSER_MATRIX_NATIVE_INTERFACE` is set, it uses two local profiles: native/web binds that interface with local TURN disabled, while web/web retains TURN. This avoids false failures caused by a same-machine TURN address and a VPN-selected native source address. The script continues after a failed browser/profile and exits nonzero after printing the full matrix result.
 

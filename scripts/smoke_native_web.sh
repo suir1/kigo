@@ -805,10 +805,16 @@ async function webToWebFile(browser) {
     });
   }
   const dir = path.join(work, "web-to-web-file");
-  const src = path.join(dir, "web-to-web.txt");
+  const sourceOverride = process.env.KIGO_SMOKE_WEB_WEB_SOURCE || "";
+  const src = sourceOverride || path.join(dir, "web-to-web.txt");
   const dst = path.join(dir, "downloaded.txt");
   const benchmarkBytes = Number(process.env.KIGO_SMOKE_WEB_WEB_BYTES || 0);
-  if (benchmarkBytes > 0) {
+  if (sourceOverride) {
+    if (!path.isAbsolute(sourceOverride) || !fs.existsSync(sourceOverride)) {
+      throw new Error(`KIGO_SMOKE_WEB_WEB_SOURCE must name an existing absolute file: ${sourceOverride}`);
+    }
+    console.log(`using browser source ${sourceOverride}`);
+  } else if (benchmarkBytes > 0) {
     if (!Number.isSafeInteger(benchmarkBytes) || benchmarkBytes > 512 * 1024 * 1024) {
       throw new Error("KIGO_SMOKE_WEB_WEB_BYTES must be an integer between 1 and 536870912");
     }
@@ -824,7 +830,7 @@ async function webToWebFile(browser) {
 
   const sender = await newPage(browser, `${baseURL}/${parallelSearch}`);
   await sender.page.evaluate((fixedCode) => { window.generateCode = () => fixedCode; }, code);
-  await sender.page.setInputFiles("#fileInput", src);
+  await sender.page.setInputFiles("#fileInput", sourceOverride || src);
   await sender.page.click("#sendFile");
   await waitForTransferComplete(sender.page);
   await receiver.done;
