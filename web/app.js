@@ -1233,6 +1233,7 @@ async function createOPFSFileStore(manifest, streamPlan) {
   }
 
   const syncWorker = await createOPFSSyncWorker(states);
+  let syncWorkerClosed = false;
   if (!syncWorker && [...states.values()].some((state) => typeof state.handle.createWritable !== "function")) {
     throw new Error("OPFS writable file handles are unavailable");
   }
@@ -1341,9 +1342,12 @@ async function createOPFSFileStore(manifest, streamPlan) {
   async function closeStore() {
     for (const state of states.values()) {
       await drainState(state);
-      await checkpoint(state);
+      if (!syncWorker) await checkpoint(state);
     }
-    if (syncWorker) await syncWorker.close();
+    if (syncWorker && !syncWorkerClosed) {
+      await syncWorker.close();
+      syncWorkerClosed = true;
+    }
   }
 
   const resume = createBrowserResumeState(manifest, streamPlan, states, {
@@ -1378,6 +1382,14 @@ async function createOPFSFileStore(manifest, streamPlan) {
       for (const [itemID, state] of states) {
         await drainState(state);
         await checkpoint(state);
+      }
+      // Some browsers expose a stale File snapshot while a sync access handle
+      // remains open. Close the worker before reading the final files back.
+      if (syncWorker && !syncWorkerClosed) {
+        await syncWorker.close();
+        syncWorkerClosed = true;
+      }
+      for (const [itemID, state] of states) {
         const file = await state.handle.getFile();
         await verifyItemFile(state.item, file);
         completed.set(itemID, { blob: file, parts: null });
