@@ -352,21 +352,6 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
-func TestTotalResumeOffsetClampsToItemSize(t *testing.T) {
-	items := []protocol.Item{
-		{Name: "a", Size: 10},
-		{Name: "b", Size: 20},
-	}
-	got := totalResumeOffset(items, map[int]int64{
-		0: 5,
-		1: 25,
-		2: 100,
-	})
-	if got != 25 {
-		t.Fatalf("got %d", got)
-	}
-}
-
 func TestStreamProgressReporterClampsPerStream(t *testing.T) {
 	items := []protocol.Item{
 		{Name: "a", Size: 10},

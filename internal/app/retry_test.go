@@ -138,7 +138,7 @@ func TestAutoReconnectResumesInterruptedEncryptedFileTransfer(t *testing.T) {
 	if err := os.WriteFile(sourcePath, want, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := transfer.PreparePath(sourcePath)
+	prepared, err := transfer.PreparePathWithOptions(sourcePath, transfer.PrepareOptions{Symlinks: transfer.SymlinkFollow})
 	if err != nil {
 		t.Fatal(err)
 	}

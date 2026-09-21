@@ -142,14 +142,6 @@ func newTransferSessionWithPipes(pipes []*securePipe, receiveAll bool) *Transfer
 	return session
 }
 
-func initSender(ctx context.Context, t transport.Transport, code string) (*securePipe, error) {
-	pipes, err := initSenderPipes(ctx, t, code)
-	if err != nil {
-		return nil, err
-	}
-	return pipes[0], nil
-}
-
 func initSenderPipes(ctx context.Context, t transport.Transport, code string) ([]*securePipe, error) {
 	channels := transport.Channels(t)
 	if len(channels) == 0 {
@@ -203,14 +195,6 @@ func initSenderPipes(ctx context.Context, t transport.Transport, code string) ([
 		pipe.deferredFileSHA256 = deferredFileSHA256
 	}
 	return pipes, nil
-}
-
-func initReceiver(ctx context.Context, t transport.Transport, code string) (*securePipe, error) {
-	pipes, err := initReceiverPipes(ctx, t, code)
-	if err != nil {
-		return nil, err
-	}
-	return pipes[0], nil
 }
 
 func initReceiverPipes(ctx context.Context, t transport.Transport, code string) ([]*securePipe, error) {
