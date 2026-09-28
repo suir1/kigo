@@ -33,18 +33,22 @@ fingerprint.
 
 Verified on 2026-09-28:
 
-- version: `v0.1.0-dev.20260928.opfs-recovery2`
-- source commit: `db197f7c95139a6afd87c0a242bcc1db9868843a`
-- build date: `2026-09-28T22:43:39Z`
+- version: `v0.1.0-dev.20260928.opfs-retry1`
+- source commit: `0fb82bab4f2f8bb7416a2aade2fc91ddd71842b5`
+- build date: `2026-09-28T23:06:58Z`
 - target: Go 1.26.6, Linux amd64
 - `/usr/local/bin/kigo` SHA-256:
-  `ee92f93563619d55aa767c7a610d45bc02d783024450caf29c4d01aff05bdb35`
+  `26224cc640f798cee41c0df31eb83e7de92c7a61ed98d265a301d3492972301d`
+- rollback binary:
+  `/usr/local/bin/kigo.backup-20260928-230658-opfs-recovery2`
 - `kigo-public.service`: active
 - `kigo-relay.service`: active
-- local Go/Python/relay/native-web suites passed, including deterministic
-  corruption of the final OPFS snapshot after the received stream hash passed
+- pull request 73 passed Go/protocol, Chromium, Firefox, WebKit, Linux,
+  Windows, container, and release-layout checks
+- local Go/Python/relay/native-web suites passed, including a stale first OPFS
+  snapshot with memory recovery disabled and persistent-corruption recovery
 - public Chromium file transfer passed over direct UDP WebRTC (`srflx/srflx`)
-  with strict TLS verification and matching SHA-256
+  with strict TLS verification and matching SHA-256 for 262,144 bytes
 
 Both services load `/usr/local/bin/kigo`. The public service stores encrypted
 shared-note snapshots under `/var/lib/kigo/notes`. Secrets remain in root/group
