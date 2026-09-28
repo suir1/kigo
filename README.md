@@ -604,7 +604,10 @@ verifies the downloaded SHA-256, and requires the selected local candidate type 
 candidate types/protocols, and address-free failure diagnostics. Use `--dry-run` to validate configuration.
 `KIGO_PUBLIC_BROWSER_SCENARIOS` selects `text`, `file`, or both; `KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS` controls
 the per-scenario timeout. `KIGO_PUBLIC_BROWSER_FILE_BYTES` overrides the default 256 KiB file size for larger
-network regression runs. This test consumes TURN bandwidth and should use a quota-limited test deployment.
+network regression runs. Reports include a bounded, non-secret sender/receiver telemetry summary with the actual
+selected ICE path, payload rate, DataChannel backpressure, and receive-storage metrics. Chromium file runs above
+128 MiB fail unless the receiver used OPFS and completed without verified-memory recovery. This test consumes TURN
+bandwidth and should use a quota-limited test deployment.
 
 Native TCP relay smoke:
 

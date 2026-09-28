@@ -48,7 +48,10 @@ Verified on 2026-09-28:
 - local Go/Python/relay/native-web suites passed, including a stale first OPFS
   snapshot with memory recovery disabled and persistent-corruption recovery
 - public Chromium file transfer passed over direct UDP WebRTC (`srflx/srflx`)
-  with strict TLS verification and matching SHA-256 for 262,144 bytes
+  with strict TLS verification and matching SHA-256 for 167,772,177 bytes
+- the large-file receiver reported OPFS `sync-worker` storage with no memory
+  recovery; payload throughput was 2.175 MiB/s, OPFS writes took 1.952s, and
+  the peak persistent-write queue was 262,144 bytes
 
 Both services load `/usr/local/bin/kigo`. The public service stores encrypted
 shared-note snapshots under `/var/lib/kigo/notes`. Secrets remain in root/group

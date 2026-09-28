@@ -6,6 +6,7 @@ const os = require("os");
 const path = require("path");
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const MEMORY_RECOVERY_LIMIT_BYTES = 128 * 1024 * 1024;
 
 function parseArgs(argv) {
   const out = { dryRun: false };
@@ -80,6 +81,54 @@ function sanitize(text, code = "") {
 
 function sha256(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function finiteMetric(value, digits = 3) {
+  if (!Number.isFinite(value)) return 0;
+  return Number(value.toFixed(digits));
+}
+
+function summarizeTransferMetrics(metrics) {
+  if (!metrics || typeof metrics !== "object") return null;
+  const storage = metrics.storage && typeof metrics.storage === "object" ? metrics.storage : {};
+  return {
+    role: String(metrics.role || ""),
+    payload_bytes: finiteMetric(metrics.payloadBytes, 0),
+    payload_mib_per_second: finiteMetric(metrics.payloadMiBPerSecond),
+    rtc_mib_per_second: finiteMetric(metrics.rtcMiBPerSecond),
+    route: String(metrics.route || ""),
+    local_candidate_type: String(metrics.localCandidateType || "unknown"),
+    remote_candidate_type: String(metrics.remoteCandidateType || "unknown"),
+    protocol: String(metrics.protocol || "unknown"),
+    path_count: finiteMetric(metrics.pathCount, 0),
+    rtt_ms: finiteMetric(metrics.rttMs),
+    max_buffered_bytes: finiteMetric(metrics.maxBufferedBytes, 0),
+    send_wait_ms: finiteMetric(metrics.sendWaitMs),
+    storage: {
+      type: String(storage.type || ""),
+      mode: String(storage.mode || ""),
+      write_ms: finiteMetric(storage.writeMs),
+      queue_wait_ms: finiteMetric(storage.queueWaitMs),
+      max_queued_bytes: finiteMetric(storage.maxQueuedBytes, 0),
+      checkpoint_ms: finiteMetric(storage.checkpointMs),
+    },
+  };
+}
+
+function assertLargeFileStorage(options, receiverMetrics, receiverLog) {
+  if (options.engine !== "chromium" || options.fileBytes <= MEMORY_RECOVERY_LIMIT_BYTES) return false;
+  if (receiverMetrics?.storage?.type !== "opfs") {
+    throw new Error(`large Chromium receive did not use OPFS storage (got ${receiverMetrics?.storage?.type || "unavailable"})`);
+  }
+  if (/memory recovery/i.test(String(receiverLog || ""))) {
+    throw new Error("large Chromium receive unexpectedly used memory recovery");
+  }
+  return true;
+}
+
+async function pageTransferMetrics(page) {
+  const metrics = await page.evaluate(() => window.__kigoLastTransferMetrics || null);
+  return summarizeTransferMetrics(metrics);
 }
 
 async function withTimeout(label, timeoutMS, fn) {
@@ -267,6 +316,12 @@ async function runFile(browser, options) {
       sender.page.waitForFunction(() => document.querySelector("#log")?.textContent.includes("Transfer complete."), null, { timeout: options.timeoutMS }),
       receiver.page.waitForFunction(() => document.querySelector("#log")?.textContent.includes("Transfer complete."), null, { timeout: options.timeoutMS }),
     ]);
+    const [senderMetrics, receiverMetrics, receiverLog] = await Promise.all([
+      pageTransferMetrics(sender.page),
+      pageTransferMetrics(receiver.page),
+      receiver.page.locator("#log").textContent(),
+    ]);
+    const opfsLargeFileVerified = assertLargeFileStorage(options, receiverMetrics, receiverLog);
     const [download] = await Promise.all([
       receiver.page.waitForEvent("download", { timeout: options.timeoutMS }),
       receiver.page.locator("#downloads a").first().click(),
@@ -278,7 +333,13 @@ async function runFile(browser, options) {
     assertRelayProof(records, options.forceTurn);
     const logs = [...sender.logs, ...receiver.logs];
     if (logs.length) throw new Error(`browser console errors: ${logs.join(" | ")}`);
-    return { bytes: fs.statSync(source).size, checksum_match: true, selected_routes: records };
+    return {
+      bytes: fs.statSync(source).size,
+      checksum_match: true,
+      opfs_large_file_verified: opfsLargeFileVerified,
+      transfer_metrics: { sender: senderMetrics, receiver: receiverMetrics },
+      selected_routes: records,
+    };
   } catch (err) {
     err.message = sanitize(err.message, code);
     err.peerDiagnostics = await peerDiagnostics(sender?.page, receiver?.page);
@@ -384,7 +445,14 @@ async function main() {
   if (report.status !== "passed") process.exitCode = 1;
 }
 
-module.exports = { parseArgs, validateOptions, sanitize, assertRelayProof };
+module.exports = {
+  assertLargeFileStorage,
+  assertRelayProof,
+  parseArgs,
+  sanitize,
+  summarizeTransferMetrics,
+  validateOptions,
+};
 
 if (require.main === module) {
   main().catch((err) => {
