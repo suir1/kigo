@@ -10,6 +10,7 @@ const OPFS_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const OPFS_WRITE_QUEUE_HIGH_BYTES = 4 * 1024 * 1024;
 const OPFS_WRITE_QUEUE_LOW_BYTES = 1 * 1024 * 1024;
 const OPFS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const OPFS_FINAL_VERIFY_DELAYS_MS = [0, 25, 100, 250];
 const BROWSER_MEMORY_RECOVERY_LIMIT = 128 * 1024 * 1024;
 const PROGRESS_RENDER_INTERVAL_MS = 100;
 const CHUNK_LOG_INTERVAL_MS = 1000;
@@ -884,7 +885,9 @@ async function receiveTransfer(pipe, session, task) {
           .map((item, itemID) => ({ item, itemID }))
           .filter(({ item }) => item.kind === "file");
         const totalFileBytes = fileItems.reduce((sum, { item }) => sum + item.size, 0);
-        if (fileStore.persistent && totalFileBytes <= BROWSER_MEMORY_RECOVERY_LIMIT &&
+        const smokeHooks = localSmokeHooks();
+        if (fileStore.persistent && !smokeHooks?.disableMemoryRecovery &&
+            totalFileBytes <= BROWSER_MEMORY_RECOVERY_LIMIT &&
             fileItems.every(({ itemID }) => fileStore.offsets().get(itemID) === 0)) {
           recoveryParts = new Map(fileItems.map(({ itemID }) => [itemID, []]));
         }
@@ -937,9 +940,7 @@ async function receiveTransfer(pipe, session, task) {
         throw error;
       } else if (msg.type === "done") {
         await session.telemetry?.markNetworkComplete();
-        const smokeHooks = ["127.0.0.1", "localhost", "::1"].includes(location.hostname)
-          ? globalThis.__kigoSmokeHooks
-          : null;
+        const smokeHooks = localSmokeHooks();
         if (smokeHooks?.beforeReceiveFinalize) {
           await smokeHooks.beforeReceiveFinalize({ manifest });
         }
@@ -1388,6 +1389,42 @@ async function createOPFSFileStore(manifest, streamPlan) {
     }
   }
 
+  async function readVerifiedFinalFile(state) {
+    let lastIntegrityError = null;
+    for (let attempt = 0; attempt < OPFS_FINAL_VERIFY_DELAYS_MS.length; attempt++) {
+      const delayMs = OPFS_FINAL_VERIFY_DELAYS_MS[attempt];
+      if (delayMs > 0) await sleep(delayMs);
+
+      // Reacquire every object involved in the read. Chromium can briefly
+      // retain an old File snapshot even after the sync access handle closes.
+      const freshRoot = await navigator.storage.getDirectory();
+      const freshDirectory = await freshRoot.getDirectoryHandle(OPFS_RECEIVE_DIR);
+      const freshHandle = await freshDirectory.getFileHandle(state.fileName);
+      const smokeHooks = localSmokeHooks();
+      if (attempt === 0 && smokeHooks?.beforeOPFSVerify) {
+        await smokeHooks.beforeOPFSVerify({ item: state.item, handle: freshHandle });
+      }
+      const injectedSnapshot = smokeHooks?.opfsVerifySnapshot
+        ? await smokeHooks.opfsVerifySnapshot({ item: state.item, handle: freshHandle, attempt })
+        : null;
+      const file = injectedSnapshot || await freshHandle.getFile();
+      try {
+        await verifyItemFile(state.item, file);
+      } catch (err) {
+        if (err?.code !== "integrity" || attempt === OPFS_FINAL_VERIFY_DELAYS_MS.length - 1) {
+          throw err;
+        }
+        lastIntegrityError = err;
+        continue;
+      }
+      if (attempt > 0) {
+        log(`OPFS final snapshot verified after ${attempt + 1} attempts for ${state.item.name}.`);
+      }
+      return file;
+    }
+    throw lastIntegrityError || new Error(`unable to verify OPFS file ${state.item.name}`);
+  }
+
   const resume = createBrowserResumeState(manifest, streamPlan, states, {
     includePrefix: true,
     reset: async (state, offset) => {
@@ -1428,19 +1465,7 @@ async function createOPFSFileStore(manifest, streamPlan) {
         syncWorkerClosed = true;
       }
       for (const [itemID, state] of states) {
-        // Reacquire the handle after closing the sync worker. Some browsers
-        // cache a stale File snapshot on the original handle instance.
-        const freshRoot = await navigator.storage.getDirectory();
-        const freshDirectory = await freshRoot.getDirectoryHandle(OPFS_RECEIVE_DIR);
-        const freshHandle = await freshDirectory.getFileHandle(state.fileName);
-        const smokeHooks = ["127.0.0.1", "localhost", "::1"].includes(location.hostname)
-          ? globalThis.__kigoSmokeHooks
-          : null;
-        if (smokeHooks?.beforeOPFSVerify) {
-          await smokeHooks.beforeOPFSVerify({ item: state.item, handle: freshHandle });
-        }
-        const file = await freshHandle.getFile();
-        await verifyItemFile(state.item, file);
+        const file = await readVerifiedFinalFile(state);
         completed.set(itemID, { blob: file, parts: null });
       }
       return completed;
@@ -2545,6 +2570,11 @@ function resetOutput() {
 
 function log(message) {
   logEl.textContent += `${new Date().toLocaleTimeString()} ${message}\n`;
+}
+
+function localSmokeHooks() {
+  if (!["127.0.0.1", "localhost", "::1"].includes(location.hostname)) return null;
+  return globalThis.__kigoSmokeHooks || null;
 }
 
 function createChunkProgressLogger(action) {
