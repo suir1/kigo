@@ -520,6 +520,67 @@ async function nativeToWebFile(browser) {
   console.log("ok native->web file");
 }
 
+async function browserOPFSFinalizeRecovery(context) {
+  console.log("start browser OPFS finalize recovery");
+  const dir = path.join(work, "browser-opfs-finalize-recovery");
+  const src = path.join(dir, "opfs-finalize-recovery.bin");
+  const dst = path.join(dir, "downloaded.bin");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(src, crypto.randomBytes(11686291));
+  const item = {
+    name: path.basename(src),
+    size: fs.statSync(src).size,
+    sha256: sha256(src),
+    sample_sha256: sampleSha256(src),
+  };
+
+  await context.addInitScript(() => {
+    globalThis.__kigoSmokeHooks = {
+      async beforeOPFSVerify({ handle }) {
+        if (globalThis.__kigoSmokeCorruptedFinalOPFS) return;
+        globalThis.__kigoSmokeCorruptedFinalOPFS = true;
+        const writer = await handle.createWritable();
+        await writer.write(new TextEncoder().encode("corrupt final OPFS snapshot"));
+        await writer.close();
+      },
+    };
+  });
+
+  const sender = spawnFileSend(src);
+  const code = await waitForPairingCode(sender, "OPFS finalize recovery sender");
+  const received = await startWebReceiver(context, code, "", {
+    watchDownload: true,
+    downloadTimeout: 45000,
+  });
+  await received.done;
+  const pageLog = await received.page.locator("#log").textContent();
+  if (!pageLog.includes("OPFS final snapshot failed after stream verification; recovered from verified memory copy.")) {
+    throw new Error(`browser did not recover the verified stream after OPFS corruption\n${pageLog}`);
+  }
+  const download = await received.automaticDownload;
+  if (!download) throw new Error(`OPFS recovery automatic download did not start\n${pageLog}`);
+  await download.saveAs(dst);
+  const exitCode = await waitProc(sender.proc);
+  const output = sender.output();
+  assertEqual(exitCode, 0, `OPFS recovery sender exited non-zero\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+  assertEqual(sha256(dst), item.sha256, "OPFS recovery download hash mismatch");
+  const partialStillExists = await received.page.evaluate(async (entry) => {
+    const key = await browserPartialKey(entry);
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle(OPFS_RECEIVE_DIR, { create: true });
+    try {
+      await directory.getFileHandle(`${key}.part`);
+      return true;
+    } catch (err) {
+      if (err?.name === "NotFoundError") return false;
+      throw err;
+    }
+  }, item);
+  if (partialStillExists) throw new Error("OPFS recovery left the corrupted partial behind");
+  if (received.logs.length) throw new Error(`browser OPFS finalize recovery logs:\n${received.logs.join("\n")}`);
+  console.log("ok browser OPFS finalize recovery");
+}
+
 async function browserPersistentReceiveResume(browser) {
   console.log("start browser same-code refresh resume");
   const dir = path.join(work, "browser-persistent-resume");
@@ -1927,6 +1988,7 @@ async function webFolderToNative(browser) {
   try {
     await runSmoke(browser, "web protocol guards", 15000, webProtocolGuards);
     await runSmoke(browser, "native->web file", 45000, nativeToWebFile);
+    await runSmoke(browser, "browser OPFS finalize recovery", 60000, browserOPFSFinalizeRecovery);
     await runSmoke(browser, "browser persistent receive resume", 90000, browserPersistentReceiveResume);
     await runSmoke(browser, "browser corrupt persistent resume", 60000, browserCorruptPersistentResume);
     await runSmoke(browser, "native->web text", 45000, nativeToWebText);

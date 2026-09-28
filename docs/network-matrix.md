@@ -137,43 +137,9 @@ reach an external TURN endpoint. A headless Firefox run that exposes only a
 non-hairpin VPN/TUN candidate is an environment-blocked result, not a product
 pass or fail.
 
-Local baseline recorded on 2026-07-17:
-
-| Engine/profile | Result | Evidence |
-| --- | --- | --- |
-| Chrome combined | Pass | Native/web and web/web core matrix; full Chromium smoke also passed |
-| Playwright WebKit native/web | Pass | Physical-interface profile, same-machine TURN disabled |
-| Playwright WebKit web/web | Pass | Built-in TURN profile |
-| Playwright Firefox protocol guards | Pass | WebCrypto, transfer protocol, compression, mux, and validation guards |
-| Playwright Firefox transfer | Environment blocked locally | Headless runtime exposed only the active TUN, which could not hairpin; no external TURN was configured |
-
-Public TURN baseline recorded on 2026-07-17 against an ephemeral IP-only VPS
-deployment using TURN control port `5140/udp` and relay ports
-`49160-49259/udp`:
-
-| Engine/profile | Result | Evidence |
-| --- | --- | --- |
-| Chromium forced TURN | Pass | Relay/UDP text and random 256 KiB file with SHA-256 verification |
-| Firefox forced TURN | Pass | Relay/UDP text and random 256 KiB file with SHA-256 verification |
-| Playwright WebKit forced TURN | Pass | Relay/UDP text and random 256 KiB file with SHA-256 verification |
-| Native/browser external service | Pass | Native-to-web and web-to-native file and text scenarios |
-
-The public browser artifacts are under `artifacts/vps-turn-5140-*`. They contain
-sanitized ICE and checksum evidence and no pairing codes, credentials, candidate
-addresses, or payloads. Service health after the run reported zero dropped
-bytes, zero quota failures, and no active TURN allocations. This replaces the
-local Firefox environment block for protocol and public TURN compatibility;
-real Safari and mobile-network coverage remain release gaps.
-
-The same endpoint was installed as the persistent `kigo-public.service` on
-2026-07-20. Its public web and signaling origin now uses port `1001/tcp` and
-passed a fresh Chromium relay-only text and file run. See
-`docs/vps-turn-relay.md` and
-`artifacts/vps-public-web-1001-chromium/matrix.json`.
-
-The persistent endpoint also advertises a Kigo native TCP relay on `5140/tcp`.
-A forced native-native fallback run negotiated temporary room-bound credentials,
-used four relay connections, and completed with a matching file checksum.
+Historical browser and public TURN baselines were moved to
+`docs/archive/network-matrix-baselines-2026-07.md`. Current acceptance should be
+based on a fresh matrix run rather than copied historical results.
 
 ### Public TURN browser run
 

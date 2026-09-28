@@ -1044,8 +1044,8 @@ async function receiveTransfer(pipe, session, task) {
       }
     }
   } catch (err) {
-    if (receivedStreamVerified && err?.code === "integrity" && /sha256 mismatch/i.test(String(err.message || ""))) {
-      const storageError = new Error(`stored file sha256 mismatch after received stream verified: ${err.message}`);
+    if (receivedStreamVerified && err?.code === "integrity" && /sha256 mismatch|size mismatch/i.test(String(err.message || ""))) {
+      const storageError = new Error(`stored file integrity mismatch after received stream verified: ${err.message}`);
       storageError.code = "storage_integrity";
       storageError.noRetry = true;
       err = storageError;
@@ -1433,6 +1433,12 @@ async function createOPFSFileStore(manifest, streamPlan) {
         const freshRoot = await navigator.storage.getDirectory();
         const freshDirectory = await freshRoot.getDirectoryHandle(OPFS_RECEIVE_DIR);
         const freshHandle = await freshDirectory.getFileHandle(state.fileName);
+        const smokeHooks = ["127.0.0.1", "localhost", "::1"].includes(location.hostname)
+          ? globalThis.__kigoSmokeHooks
+          : null;
+        if (smokeHooks?.beforeOPFSVerify) {
+          await smokeHooks.beforeOPFSVerify({ item: state.item, handle: freshHandle });
+        }
         const file = await freshHandle.getFile();
         await verifyItemFile(state.item, file);
         completed.set(itemID, { blob: file, parts: null });
@@ -2365,7 +2371,9 @@ function validateChunkStream(msg, plan = null) {
 async function verifyItemParts(item, parts) {
   const size = parts.reduce((sum, part) => sum + part.length, 0);
   if (size !== item.size) {
-    throw new Error(`size mismatch for ${item.name}: got ${size}, want ${item.size}`);
+    const error = new Error(`size mismatch for ${item.name}: got ${size}, want ${item.size}`);
+    error.code = "integrity";
+    throw error;
   }
   if (item.sha256) {
     const hasher = new SHA256();
@@ -2381,7 +2389,9 @@ async function verifyItemParts(item, parts) {
 
 async function verifyItemFile(item, file) {
   if (file.size !== item.size) {
-    throw new Error(`size mismatch for ${item.name}: got ${file.size}, want ${item.size}`);
+    const error = new Error(`size mismatch for ${item.name}: got ${file.size}, want ${item.size}`);
+    error.code = "integrity";
+    throw error;
   }
   if (item.sha256) {
     const got = await fileSHA256(file);
