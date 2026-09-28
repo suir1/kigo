@@ -581,6 +581,50 @@ async function browserOPFSFinalizeRecovery(context) {
   console.log("ok browser OPFS finalize recovery");
 }
 
+async function browserOPFSFinalizeRetry(context) {
+  console.log("start browser OPFS finalize retry");
+  const dir = path.join(work, "browser-opfs-finalize-retry");
+  const src = path.join(dir, "opfs-finalize-retry.bin");
+  const dst = path.join(dir, "downloaded.bin");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(src, crypto.randomBytes(4 * 1024 * 1024 + 17));
+  const expectedSHA256 = sha256(src);
+
+  await context.addInitScript(() => {
+    globalThis.__kigoSmokeHooks = {
+      disableMemoryRecovery: true,
+      async opfsVerifySnapshot({ handle, attempt }) {
+        if (attempt === 0) return new Blob([new Uint8Array(17)]);
+        return handle.getFile();
+      },
+    };
+  });
+
+  const sender = spawnFileSend(src);
+  const code = await waitForPairingCode(sender, "OPFS finalize retry sender");
+  const received = await startWebReceiver(context, code, "", {
+    watchDownload: true,
+    downloadTimeout: 45000,
+  });
+  await received.done;
+  const pageLog = await received.page.locator("#log").textContent();
+  if (!pageLog.includes("OPFS final snapshot verified after 2 attempts")) {
+    throw new Error(`browser did not retry a stale OPFS final snapshot\n${pageLog}`);
+  }
+  if (pageLog.includes("recovered from verified memory copy")) {
+    throw new Error(`browser unexpectedly used memory recovery\n${pageLog}`);
+  }
+  const download = await received.automaticDownload;
+  if (!download) throw new Error(`OPFS retry automatic download did not start\n${pageLog}`);
+  await download.saveAs(dst);
+  const exitCode = await waitProc(sender.proc);
+  const output = sender.output();
+  assertEqual(exitCode, 0, `OPFS retry sender exited non-zero\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+  assertEqual(sha256(dst), expectedSHA256, "OPFS retry download hash mismatch");
+  if (received.logs.length) throw new Error(`browser OPFS finalize retry logs:\n${received.logs.join("\n")}`);
+  console.log("ok browser OPFS finalize retry");
+}
+
 async function browserPersistentReceiveResume(browser) {
   console.log("start browser same-code refresh resume");
   const dir = path.join(work, "browser-persistent-resume");
@@ -1989,6 +2033,7 @@ async function webFolderToNative(browser) {
     await runSmoke(browser, "web protocol guards", 15000, webProtocolGuards);
     await runSmoke(browser, "native->web file", 45000, nativeToWebFile);
     await runSmoke(browser, "browser OPFS finalize recovery", 60000, browserOPFSFinalizeRecovery);
+    await runSmoke(browser, "browser OPFS finalize retry", 60000, browserOPFSFinalizeRetry);
     await runSmoke(browser, "browser persistent receive resume", 90000, browserPersistentReceiveResume);
     await runSmoke(browser, "browser corrupt persistent resume", 60000, browserCorruptPersistentResume);
     await runSmoke(browser, "native->web text", 45000, nativeToWebText);
