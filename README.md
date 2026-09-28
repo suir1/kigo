@@ -124,6 +124,7 @@ Implemented in this version:
 - Browser receivers verify SHA-256 before showing text or download links
 - Chromium receivers persist file prefixes in OPFS every 4 MiB and resume matching name/size/SHA-256 manifests after interruption or page reload
 - Chromium receivers use a same-origin OPFS Dedicated Worker with synchronous access handles when available, so file writes do not occupy the transfer/UI thread; other browsers retain the asynchronous OPFS or memory fallback
+- For fresh browser receives up to 128 MiB, Kigo keeps a verified in-memory copy while writing OPFS and uses it if the final persistent snapshot has a size or SHA-256 mismatch; the corrupted partial is discarded before completion
 - WebRTC signaling assigns random per-role reconnect tokens; a refreshed browser can reclaim its sender/receiver slot with the same pairing code without restarting the native peer
 - Reconnect tokens are exchanged only after the `kigo-reconnect-v1` WebSocket subprotocol is negotiated, are never placed in URLs, and remain scoped to the current browser tab or native command
 - Each WebRTC retry creates a fresh peer connection, hello nonce pair, HKDF output, AES-GCM session, and envelope sequence while resume reuses only the verified plaintext prefix
