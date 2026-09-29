@@ -597,17 +597,32 @@ Set `PLAYWRIGHT_BROWSER=chromium|firefox|webkit` and optionally `KIGO_SMOKE_FILT
 
 Playwright WebKit is a useful WebKit compatibility signal, but it is not a substitute for testing released Safari on macOS and iOS. Likewise, headless Firefox may expose only a VPN/TUN interface; if that interface cannot hairpin and the configured TURN endpoint is loopback-only, ICE will fail even though browser protocol guards pass. Use an externally reachable TURN service or a host without the TUN for the release Firefox matrix.
 
-`smoke_public_browser.sh` connects directly to an already deployed HTTPS Kigo service. It forces
+`smoke_public_browser.sh` connects directly to an already deployed HTTPS Kigo service. By default it forces
 `iceTransportPolicy=relay`, transfers encrypted text and a 256 KiB random file between two browser contexts,
 verifies the downloaded SHA-256, and requires the selected local candidate type to be `relay`. Its
 `matrix.json` records only browser version, authenticated TURN availability, duration, byte/checksum results,
 candidate types/protocols, and address-free failure diagnostics. Use `--dry-run` to validate configuration.
-`KIGO_PUBLIC_BROWSER_SCENARIOS` selects `text`, `file`, or both; `KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS` controls
-the per-scenario timeout. `KIGO_PUBLIC_BROWSER_FILE_BYTES` overrides the default 256 KiB file size for larger
+`KIGO_PUBLIC_BROWSER_SCENARIOS` selects `text`, `file`, `resume`, or a comma-separated subset;
+`KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS` controls the per-scenario timeout. The `resume` scenario requires a file
+larger than 4 MiB: it interrupts a Chromium OPFS receive, reloads the receiver while keeping the sender alive,
+reclaims the same signaling role, requires a nonzero accepted offset equal to the stored prefix, then verifies
+the final downloaded SHA-256. Set `KIGO_PUBLIC_BROWSER_FORCE_TURN=0` to exercise the normal direct/TURN race
+instead of relay-only ICE. `KIGO_PUBLIC_BROWSER_FILE_BYTES` overrides the default 256 KiB file size for larger
 network regression runs. Reports include a bounded, non-secret sender/receiver telemetry summary with the actual
 selected ICE path, payload rate, DataChannel backpressure, and receive-storage metrics. Chromium file runs above
 128 MiB fail unless the receiver used OPFS and completed without verified-memory recovery. This test consumes TURN
 bandwidth and should use a quota-limited test deployment.
+
+For example, this runs a strict-TLS 64 MiB refresh/resume proof over the service's normal route race:
+
+```sh
+KIGO_PUBLIC_BROWSER_URL=https://kigo.example \
+KIGO_PUBLIC_BROWSER_SCENARIOS=resume \
+KIGO_PUBLIC_BROWSER_FORCE_TURN=0 \
+KIGO_PUBLIC_BROWSER_FILE_BYTES=$((64*1024*1024+17)) \
+KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS=600 \
+./scripts/smoke_public_browser.sh
+```
 
 Native TCP relay smoke:
 
@@ -688,6 +703,12 @@ restart that file from offset zero. Use `--no-reconnect`, `--reconnect-attempts`
 `--reconnect-delay` to control retries.
 WebRTC reconnect is enabled only when the signaling service negotiates `kigo-reconnect-v1`; older services and
 clients retain the original one-shot room behavior.
+Each signaling reconnect starts a new room generation and evicts stale-generation peers and queued signals. A
+refreshed browser reuses the route strategy selected by the original tab (`direct`, `relay`, or the delayed race),
+so both peers rebuild compatible peer connections instead of one side restarting the full race. Route commit uses
+a commit/ack/confirm barrier before transfer frames begin, preventing late route-control frames from entering the
+encrypted transfer handshake. If a stored reconnect token is rejected, the browser removes only that stale token
+and performs one clean role join with the same pairing code.
 
 Repeatable relay smoke:
 

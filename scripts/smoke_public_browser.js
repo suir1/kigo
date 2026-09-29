@@ -7,6 +7,7 @@ const path = require("path");
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MEMORY_RECOVERY_LIMIT_BYTES = 128 * 1024 * 1024;
+const RESUME_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 
 function parseArgs(argv) {
   const out = { dryRun: false };
@@ -42,8 +43,8 @@ function validateOptions(raw) {
   if (!['0', '1'].includes(raw.force_turn)) throw new Error("force TURN must be 0 or 1");
   if (!['0', '1'].includes(raw.ignore_tls_errors)) throw new Error("ignore TLS errors must be 0 or 1");
   const scenarios = String(raw.scenarios || "").split(",").map((value) => value.trim()).filter(Boolean);
-  if (!scenarios.length || scenarios.some((value) => !['text', 'file'].includes(value))) {
-    throw new Error("scenarios must be a comma-separated subset of text,file");
+  if (!scenarios.length || scenarios.some((value) => !['text', 'file', 'resume'].includes(value))) {
+    throw new Error("scenarios must be a comma-separated subset of text,file,resume");
   }
   const timeoutSeconds = Number(raw.timeout_seconds);
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 600) {
@@ -52,6 +53,9 @@ function validateOptions(raw) {
   const fileBytes = Number(process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES || 256 * 1024);
   if (!Number.isSafeInteger(fileBytes) || fileBytes < 1 || fileBytes > 512 * 1024 * 1024) {
     throw new Error("KIGO_PUBLIC_BROWSER_FILE_BYTES must be an integer between 1 and 536870912");
+  }
+  if (scenarios.includes("resume") && fileBytes <= RESUME_CHECKPOINT_BYTES) {
+    throw new Error(`resume scenario requires KIGO_PUBLIC_BROWSER_FILE_BYTES greater than ${RESUME_CHECKPOINT_BYTES}`);
   }
   return {
     url: url.origin + url.pathname.replace(/\/$/, ""),
@@ -124,6 +128,31 @@ function assertLargeFileStorage(options, receiverMetrics, receiverLog) {
     throw new Error("large Chromium receive unexpectedly used memory recovery");
   }
   return true;
+}
+
+function extractResumeEvidence(receiverLog, fileBytes) {
+  const log = String(receiverLog || "");
+  const found = log.match(/Found saved partial for .*?: (\d+)\/(\d+) bytes\./);
+  const accepted = log.match(/Sender accepted .*? resume at (\d+) bytes\./);
+  if (!found) throw new Error("receiver did not report a saved OPFS partial after refresh");
+  if (!accepted) throw new Error("receiver did not report the accepted resume offset");
+  const savedOffset = Number(found[1]);
+  const savedSize = Number(found[2]);
+  const acceptedOffset = Number(accepted[1]);
+  if (savedSize !== fileBytes) {
+    throw new Error(`saved partial size metadata mismatch: got ${savedSize}, want ${fileBytes}`);
+  }
+  if (savedOffset < RESUME_CHECKPOINT_BYTES || savedOffset >= fileBytes) {
+    throw new Error(`saved partial offset is not a resumable checkpoint: ${savedOffset}`);
+  }
+  if (acceptedOffset !== savedOffset) {
+    throw new Error(`sender accepted ${acceptedOffset} bytes, saved partial was ${savedOffset} bytes`);
+  }
+  return {
+    checkpoint_bytes: RESUME_CHECKPOINT_BYTES,
+    saved_partial_bytes: savedOffset,
+    accepted_offset_bytes: acceptedOffset,
+  };
 }
 
 async function pageTransferMetrics(page) {
@@ -263,6 +292,14 @@ async function runText(browser, options) {
   let sender;
   try {
     receiver = await newPage(context, `${options.url}/#c=${code}`);
+    await receiver.page.evaluate(() => {
+      const decode = window.decodeTransferChunk;
+      window.decodeTransferChunk = async (...args) => {
+        const data = await decode(...args);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return data;
+      };
+    });
     sender = await newPage(context, `${options.url}/`);
     await sender.page.click('button[data-tab="text"]');
     await sender.page.fill("#textInput", payload);
@@ -351,6 +388,102 @@ async function runFile(browser, options) {
   }
 }
 
+async function runResume(browser, options) {
+  const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: options.ignoreTLSErrors });
+  await installRouteProbe(context, options.forceTurn);
+  const code = randomCode();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-resume-"));
+  const source = path.join(work, "resume-payload.bin");
+  const received = path.join(work, "resume-received.bin");
+  fs.writeFileSync(source, crypto.randomBytes(options.fileBytes));
+  let receiver;
+  let sender;
+  try {
+    receiver = await newPage(context, `${options.url}/#c=${code}`);
+    sender = await newPage(context, `${options.url}/`);
+    await sender.page.setInputFiles("#fileInput", source);
+    await sender.page.fill("#fileCode", code);
+    await sender.page.click("#sendFile");
+
+    await receiver.page.waitForFunction((checkpoint) => {
+      const text = document.querySelector("#log")?.textContent || "";
+      return [...text.matchAll(/offset=(\d+)/g)].some((match) => Number(match[1]) >= checkpoint - 64 * 1024);
+    }, RESUME_CHECKPOINT_BYTES, { timeout: options.timeoutMS }).catch((err) => {
+      throw new Error(`initial receive did not reach the OPFS checkpoint: ${err.message}`);
+    });
+    const persistedBeforeRefresh = await receiver.page.evaluate(async (checkpoint) => {
+      const root = await navigator.storage.getDirectory();
+      const directory = await root.getDirectoryHandle("kigo-receive-v1");
+      let largest = 0;
+      for await (const [name, handle] of directory.entries()) {
+        if (handle.kind !== "file" || !name.endsWith(".part")) continue;
+        largest = Math.max(largest, (await handle.getFile()).size);
+      }
+      if (largest < checkpoint) throw new Error(`OPFS partial had only ${largest} bytes before refresh`);
+      return largest;
+    }, RESUME_CHECKPOINT_BYTES);
+
+    await receiver.page.reload({ waitUntil: "domcontentloaded" });
+    await receiver.page.waitForFunction(() => {
+      const text = document.querySelector("#log")?.textContent || "";
+      return /Found saved partial for .*?: [1-9]\d*\/\d+ bytes\./.test(text)
+        && /Sender accepted .*? resume at [1-9]\d* bytes\./.test(text);
+    }, null, { timeout: options.timeoutMS }).catch(async (err) => {
+      const [senderLog, receiverLog] = await Promise.all([
+        sender.page.locator("#log").textContent().catch(() => ""),
+        receiver.page.locator("#log").textContent().catch(() => ""),
+      ]);
+      throw new Error(`refresh did not negotiate a nonzero resume offset: ${err.message}\nsender=${senderLog}\nreceiver=${receiverLog}`);
+    });
+    await Promise.all([
+      sender.page.waitForFunction(() => document.querySelector("#log")?.textContent.includes("Transfer complete."), null, { timeout: options.timeoutMS }),
+      receiver.page.waitForFunction(() => document.querySelector("#log")?.textContent.includes("Transfer complete."), null, { timeout: options.timeoutMS }),
+    ]).catch(async (err) => {
+      const [senderLog, receiverLog] = await Promise.all([
+        sender.page.locator("#log").textContent().catch(() => ""),
+        receiver.page.locator("#log").textContent().catch(() => ""),
+      ]);
+      throw new Error(`resumed transfer did not complete: ${err.message}\nsender=${senderLog}\nreceiver=${receiverLog}`);
+    });
+
+    const [senderMetrics, receiverMetrics, receiverLog] = await Promise.all([
+      pageTransferMetrics(sender.page),
+      pageTransferMetrics(receiver.page),
+      receiver.page.locator("#log").textContent(),
+    ]);
+    const resumeEvidence = extractResumeEvidence(receiverLog, options.fileBytes);
+    if (resumeEvidence.saved_partial_bytes < persistedBeforeRefresh) {
+      throw new Error(`saved partial shrank across refresh: before=${persistedBeforeRefresh}, resumed=${resumeEvidence.saved_partial_bytes}`);
+    }
+    const [download] = await Promise.all([
+      receiver.page.waitForEvent("download", { timeout: options.timeoutMS }),
+      receiver.page.locator("#downloads a").first().click(),
+    ]);
+    await download.saveAs(received);
+    if (sha256(source) !== sha256(received)) throw new Error("resumed file checksum did not match source");
+    const records = await routeRecords(sender.page, receiver.page);
+    assertRelayProof(records, options.forceTurn);
+    const logs = [...sender.logs, ...receiver.logs];
+    if (logs.length) throw new Error(`browser console errors: ${logs.join(" | ")}`);
+    return {
+      bytes: fs.statSync(source).size,
+      checksum_match: true,
+      page_refreshes: 1,
+      resume: resumeEvidence,
+      transfer_metrics: { sender: senderMetrics, receiver: receiverMetrics },
+      selected_routes: records,
+    };
+  } catch (err) {
+    err.message = sanitize(err.message, code);
+    err.peerDiagnostics = await peerDiagnostics(sender?.page, receiver?.page);
+    err.browserLogs = [...(sender?.logs || []), ...(receiver?.logs || [])].map((line) => sanitize(line, code));
+    throw err;
+  } finally {
+    await context.close();
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   let options;
   try {
@@ -419,7 +552,11 @@ async function main() {
     for (const name of options.scenarios) {
       const started = Date.now();
       try {
-        const result = name === "text" ? await runText(browser, options) : await runFile(browser, options);
+        const result = name === "text"
+          ? await runText(browser, options)
+          : name === "resume"
+            ? await runResume(browser, options)
+            : await runFile(browser, options);
         report.scenarios.push({ name, status: "passed", duration_ms: Date.now() - started, ...result });
         console.log(`ok public browser ${name}`);
       } catch (err) {
@@ -448,6 +585,7 @@ async function main() {
 module.exports = {
   assertLargeFileStorage,
   assertRelayProof,
+  extractResumeEvidence,
   parseArgs,
   sanitize,
   summarizeTransferMetrics,

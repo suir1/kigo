@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   assertLargeFileStorage,
   assertRelayProof,
+  extractResumeEvidence,
   parseArgs,
   sanitize,
   summarizeTransferMetrics,
@@ -38,6 +39,19 @@ test("validateOptions accepts HTTPS and loopback HTTP", () => {
     validateOptions(validRaw({ url: "http://127.0.0.1:8080/" })).url,
     "http://127.0.0.1:8080",
   );
+});
+
+test("validateOptions accepts resume only with a checkpoint-sized payload", () => {
+  const previous = process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+  try {
+    process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES = String(8 * 1024 * 1024);
+    assert.deepEqual(validateOptions(validRaw({ scenarios: "resume" })).scenarios, ["resume"]);
+    process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES = String(4 * 1024 * 1024);
+    assert.throws(() => validateOptions(validRaw({ scenarios: "resume" })), /greater than 4194304/);
+  } finally {
+    if (previous === undefined) delete process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+    else process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES = previous;
+  }
 });
 
 test("validateOptions rejects insecure or credentialed endpoints", () => {
@@ -125,4 +139,22 @@ test("large Chromium storage proof requires OPFS without memory recovery", () =>
   assert.equal(assertLargeFileStorage({ ...large, engine: "firefox" }, null, ""), false);
   assert.throws(() => assertLargeFileStorage(large, { storage: { type: "memory" } }, ""), /did not use OPFS/);
   assert.throws(() => assertLargeFileStorage(large, { storage: { type: "opfs" } }, "using memory recovery"), /memory recovery/);
+});
+
+test("resume evidence requires the saved and accepted nonzero offsets to match", () => {
+  const fileBytes = 12 * 1024 * 1024;
+  assert.deepEqual(extractResumeEvidence(
+    `Found saved partial for payload.bin: 4194304/${fileBytes} bytes.\n`
+      + "Sender accepted payload.bin resume at 4194304 bytes.",
+    fileBytes,
+  ), {
+    checkpoint_bytes: 4194304,
+    saved_partial_bytes: 4194304,
+    accepted_offset_bytes: 4194304,
+  });
+  assert.throws(() => extractResumeEvidence(
+    `Found saved partial for payload.bin: 4194304/${fileBytes} bytes.\n`
+      + "Sender accepted payload.bin resume at 0 bytes.",
+    fileBytes,
+  ), /accepted 0 bytes/);
 });

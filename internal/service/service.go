@@ -111,6 +111,7 @@ type client struct {
 	send         chan []byte
 	role         string
 	explicitRole bool
+	generation   uint64
 	closed       bool
 }
 
@@ -656,9 +657,7 @@ func (s *Server) joinWithRoleProtocol(
 			return nil, errors.New("invalid reconnect token")
 		}
 		if r.needsNewGeneration {
-			r.generation++
-			r.pending = nil
-			r.needsNewGeneration = false
+			s.startReconnectGenerationLocked(r)
 		}
 	} else {
 		if reconnectToken != "" {
@@ -697,6 +696,7 @@ func (s *Server) joinWithRoleProtocol(
 		send:         make(chan []byte, signalSendQueueCapacity),
 		role:         role,
 		explicitRole: true,
+		generation:   r.generation,
 	}
 	r.clients[c] = true
 	r.slots[role] = c
@@ -732,7 +732,7 @@ func (s *Server) joinLegacyLocked(r *room, conn *websocket.Conn) (*client, error
 	if len(r.clients) >= 2 {
 		return nil, errors.New("room is full")
 	}
-	c := &client{room: r, conn: conn, send: make(chan []byte, signalSendQueueCapacity)}
+	c := &client{room: r, conn: conn, send: make(chan []byte, signalSendQueueCapacity), generation: r.generation}
 	for existing := range r.clients {
 		if existing.role != "" {
 			c.role = oppositeSignalRole(existing.role)
@@ -861,6 +861,9 @@ func (s *Server) forward(from *client, payload []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := from.room
+	if from.closed || from.generation != r.generation || !r.clients[from] {
+		return
+	}
 	if len(r.pending) >= maxPendingSignals {
 		copy(r.pending, r.pending[1:])
 		r.pending = r.pending[:maxPendingSignals-1]
@@ -874,6 +877,19 @@ func (s *Server) forward(from *client, payload []byte) {
 		case c.send <- payload:
 		default:
 		}
+	}
+}
+
+func (s *Server) startReconnectGenerationLocked(r *room) {
+	r.generation++
+	r.pending = nil
+	r.needsNewGeneration = false
+	for existing := range r.clients {
+		delete(r.clients, existing)
+		if existing.role != "" && r.slots[existing.role] == existing {
+			delete(r.slots, existing.role)
+		}
+		closeClient(existing)
 	}
 }
 

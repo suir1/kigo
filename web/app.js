@@ -1086,7 +1086,7 @@ async function createBrowserFileStore(manifest, streamPlan) {
   return createMemoryFileStore(manifest, streamPlan);
 }
 
-function createBrowserResumeState(manifest, streamPlan, states, { includePrefix = false, reset }) {
+function createBrowserResumeState(manifest, streamPlan, states, { includePrefix = false, reset, accept = () => {} }) {
   return {
     offsets() {
       return new Map([...states].map(([itemID, state]) => [itemID, state.offset]));
@@ -1110,6 +1110,7 @@ function createBrowserResumeState(manifest, streamPlan, states, { includePrefix 
         if (entry.skip) throw new Error(`sender unexpectedly skipped browser item ${itemID}`);
         if (entry.offset > state.offset) throw new Error(`sender increased browser resume offset for item ${itemID}: ${entry.offset}`);
         if (entry.offset !== state.offset) await reset(state, entry.offset);
+        await accept(state, entry.offset);
       }
     },
   };
@@ -1429,6 +1430,8 @@ async function createOPFSFileStore(manifest, streamPlan) {
     includePrefix: true,
     reset: async (state, offset) => {
       await truncateState(state, offset);
+    },
+    accept: (state, offset) => {
       log(`Sender accepted ${state.item.name} resume at ${offset} bytes.`);
     },
   });
