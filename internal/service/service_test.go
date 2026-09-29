@@ -804,6 +804,59 @@ func TestRoleReconnectClearsStaleSignalsOnlyOncePerGeneration(t *testing.T) {
 	s.leave(rejoinedReceiver)
 }
 
+func TestRoleReconnectEvictsAndIgnoresPreviousGeneration(t *testing.T) {
+	s := New(Config{})
+	token := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	sender, err := s.joinWithRole(token, nil, "sender", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderReady := readSignalReady(t, sender)
+	receiver, err := s.joinWithRole(token, nil, "receiver", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverReady := readSignalReady(t, receiver)
+
+	s.leave(sender)
+	rejoinedSender, err := s.joinWithRole(token, nil, "sender", senderReady.ReconnectToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready := readSignalReady(t, rejoinedSender); ready.Generation != 1 {
+		t.Fatalf("sender reconnect generation = %d, want 1", ready.Generation)
+	}
+	if !receiver.closed {
+		t.Fatal("previous-generation receiver remained connected")
+	}
+
+	s.forward(receiver, []byte(`{"type":"offer","sdp":"stale"}`))
+	rejoinedReceiver, err := s.joinWithRole(token, nil, "receiver", receiverReady.ReconnectToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready := readSignalReady(t, rejoinedReceiver); ready.Generation != 1 {
+		t.Fatalf("receiver reconnect generation = %d, want 1", ready.Generation)
+	}
+	select {
+	case payload := <-rejoinedReceiver.send:
+		t.Fatalf("receiver replayed stale previous-generation signal %s", payload)
+	default:
+	}
+
+	s.forward(rejoinedSender, []byte(`{"type":"offer","sdp":"fresh"}`))
+	select {
+	case payload := <-rejoinedReceiver.send:
+		if string(payload) != `{"type":"offer","sdp":"fresh"}` {
+			t.Fatalf("receiver got %s, want fresh offer", payload)
+		}
+	default:
+		t.Fatal("receiver did not receive current-generation signal")
+	}
+	s.leave(rejoinedSender)
+	s.leave(rejoinedReceiver)
+}
+
 func TestRoleReconnectRoomExpiresWithTokens(t *testing.T) {
 	s := New(Config{RoomTTL: time.Minute})
 	token := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

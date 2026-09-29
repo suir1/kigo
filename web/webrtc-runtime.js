@@ -73,26 +73,37 @@
       }
     }
 
-    async function connectSignal(token, role, protocol) {
+    async function connectSignal(token, role, protocol, allowTokenReset = true) {
       const ws = new WebSocket(signalURL(token, role, protocol), [reconnectProtocol]);
       const handlers = new Map();
       const waiters = [];
       const backlog = [];
       let closed = false;
       let reconnectSupported = false;
+      let generation = 0;
+      let resolveReady;
+      let rejectReady;
+      const readyPromise = new Promise((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
       const failWaiters = (err) => {
         while (waiters.length) waiters.shift().reject(err);
       };
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "error") {
-          failWaiters(new Error(msg.error || "signaling error"));
+          const err = new Error(msg.error || "signaling error");
+          rejectReady(err);
+          failWaiters(err);
           return;
         }
         if (msg.type === "signal_ready") {
           reconnectSupported = msg.reconnect_supported === true && typeof msg.reconnect_token === "string";
+          generation = Number.isSafeInteger(msg.generation) && msg.generation >= 0 ? msg.generation : 0;
           if (reconnectSupported) storeReconnectToken(token, role, msg.reconnect_token, protocol);
           else clearReconnectToken(token, role, protocol);
+          resolveReady();
           return;
         }
         let handled = false;
@@ -108,10 +119,16 @@
         }
         if (!handled) backlog.push(msg);
       };
-      ws.onerror = () => failWaiters(new Error("signaling failed"));
+      ws.onerror = () => {
+        const err = new Error("signaling failed");
+        rejectReady(err);
+        failWaiters(err);
+      };
       ws.onclose = () => {
         closed = true;
-        failWaiters(new Error("signaling connection closed"));
+        const err = new Error("signaling connection closed");
+        rejectReady(err);
+        failWaiters(err);
       };
       await withTimeout(waitWebSocket(ws), "WebSocket signaling connection", signalTimeoutMs);
       if (ws.protocol === reconnectProtocol) {
@@ -119,6 +136,18 @@
           type: "signal_join",
           reconnect_token: loadReconnectToken(token, role, protocol),
         }));
+        try {
+          await withTimeout(readyPromise, "signaling readiness", signalTimeoutMs);
+        } catch (err) {
+          if (allowTokenReset && /invalid reconnect token/i.test(String(err?.message || err))) {
+            discardReconnectToken(token, role, protocol);
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+            return connectSignal(token, role, protocol, false);
+          }
+          throw err;
+        }
+      } else {
+        resolveReady();
       }
       return {
         send(msg) {
@@ -151,6 +180,7 @@
           }
         },
         reconnectSupported: () => reconnectSupported,
+        generation: () => generation,
         close() {
           closed = true;
           failWaiters(new Error("signaling canceled"));
@@ -219,6 +249,10 @@
         if (typeof event.data === "string") data = event.data;
         else if (event.data instanceof ArrayBuffer) data = new Uint8Array(event.data);
         else if (event.data instanceof Blob) data = new Uint8Array(await event.data.arrayBuffer());
+        // Route selection shares the primary channel until the winning peer is
+        // committed. A duplicate or late commit/ack must not enter the transfer
+        // protocol after the channel handler is handed over to this transport.
+        if (parseRaceControl(data)) return;
         const frameBytes = frameByteLength(data);
         receivedBytes += frameBytes;
         if (channel !== dc) dataReceivedBytes += frameBytes;
@@ -412,6 +446,7 @@
             candidate.control.send("kigo_route_commit", candidate.iceMode);
             const ack = await candidate.control.wait("kigo_route_ack", signalTimeoutMs);
             if (ack.mode !== candidate.iceMode) throw new Error("WebRTC route acknowledgement mismatch");
+            candidate.control.send("kigo_route_confirm", candidate.iceMode);
             finish(candidate);
           } catch (err) {
             committing = false;
@@ -431,6 +466,10 @@
               if (settled) return;
               if (message.mode !== mode) throw new Error("WebRTC route commit mismatch");
               candidate.control.send("kigo_route_ack", mode);
+              return candidate.control.wait("kigo_route_confirm", signalTimeoutMs);
+            }).then((message) => {
+              if (settled) return;
+              if (message.mode !== mode) throw new Error("WebRTC route confirmation mismatch");
               finish(candidate);
             }).catch((err) => fail(mode, err));
             return;
@@ -500,13 +539,17 @@
         onRetry = () => {},
         onParallelFallback = () => {},
       } = config;
+      const storedRoute = loadReconnectRoute(token, role, protocol);
+      const sessionRoute = storedRoute || (config.directFirst ? "race" : "primary");
+      const directFirst = sessionRoute === "race";
+      storeReconnectRoute(token, role, sessionRoute, protocol);
       for (let attempt = 1; attempt <= reconnectAttempts; attempt++) {
         let peer = null;
         let pipe = null;
         let removePipeCleanup = () => {};
         try {
           const connectStarted = performance.now();
-          const connected = config.directFirst
+          const connected = directFirst
             ? await connectRacedPeer({ ...config, role, token, task, protocol })
             : await connectPrimaryPeer({
               role,
@@ -518,7 +561,14 @@
             });
           const { iceMode, signalToken, connectTimeoutMs, pendingPrimaryMessages, race } = connected;
           peer = connected.peer;
-          const useParallelData = Boolean(config.parallelData) && iceMode !== "relay";
+          const signalGeneration = Number(peer.signal?.generation?.() || 0);
+          // Reconnected peers can enter this loop with different local attempt counts.
+          // The server generation is shared by both roles, so use it to make the
+          // parallel-lane decision symmetrically and keep resume on one robust path.
+          const useParallelData = Boolean(config.parallelData)
+            && iceMode !== "relay"
+            && signalGeneration === 0;
+          peer.signalGeneration = signalGeneration;
           const primaryClose = peer.close;
           const dataPeers = [];
           peer.pcs = [peer.pc];
@@ -559,7 +609,7 @@
             err,
             attempt,
             nextAttempt: attempt + 1,
-            nextMode: config.directFirst ? "race" : "all",
+            nextMode: directFirst ? "race" : "all",
             maxAttempts: reconnectAttempts,
             diagnostics: err?.diagnostics || peer?.iceDiagnostics?.(),
           });
@@ -592,6 +642,10 @@
       return `${reconnectStoragePrefix}${protocolPrefix}${role}:${token}`;
     }
 
+    function reconnectRouteKey(token, role, protocol = "transfer") {
+      return `${reconnectKey(token, role, protocol)}:route`;
+    }
+
     function loadReconnectToken(token, role, protocol) {
       try {
         return sessionStorage.getItem(reconnectKey(token, role, protocol)) || "";
@@ -607,9 +661,32 @@
       } catch {}
     }
 
-    function clearReconnectToken(token, role, protocol = "transfer") {
+    function discardReconnectToken(token, role, protocol = "transfer") {
       try {
         sessionStorage.removeItem(reconnectKey(token, role, protocol));
+      } catch {}
+    }
+
+    function loadReconnectRoute(token, role, protocol) {
+      try {
+        const value = sessionStorage.getItem(reconnectRouteKey(token, role, protocol)) || "";
+        return value === "race" || value === "primary" ? value : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function storeReconnectRoute(token, role, value, protocol) {
+      if (value !== "race" && value !== "primary") return;
+      try {
+        sessionStorage.setItem(reconnectRouteKey(token, role, protocol), value);
+      } catch {}
+    }
+
+    function clearReconnectToken(token, role, protocol = "transfer") {
+      try {
+        discardReconnectToken(token, role, protocol);
+        sessionStorage.removeItem(reconnectRouteKey(token, role, protocol));
       } catch {}
     }
 
@@ -719,7 +796,7 @@
     try {
       const message = JSON.parse(value);
       if (message?.version !== 1 || !["direct", "relay"].includes(message.mode)) return null;
-      if (!["kigo_route_commit", "kigo_route_ack"].includes(message.type)) return null;
+      if (!["kigo_route_commit", "kigo_route_ack", "kigo_route_confirm"].includes(message.type)) return null;
       return message;
     } catch {
       return null;
