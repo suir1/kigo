@@ -2,6 +2,9 @@
   "use strict";
 
   const encoder = new TextEncoder();
+  if (new URLSearchParams(location.search).has("kigo-debug")) {
+    global.__kigoRuntimeDebug = { version: "signal-stage-v1", stages: [] };
+  }
 
   function create(options = {}) {
     const signalTimeoutMs = options.signalTimeoutMs || 30 * 1000;
@@ -16,6 +19,7 @@
     const bufferLowBytes = options.bufferLowBytes || 2 * 1024 * 1024;
     async function createPeer(role, token, task, protocol = "transfer", iceMode = "all", unorderedData = false) {
       if (role !== "sender" && role !== "receiver") throw new Error("invalid WebRTC role");
+      registerDebugStage("create_peer", { role, iceMode, protocol, tokenPrefix: String(token).slice(0, 8) });
       const signal = await connectSignal(token, role, protocol);
       const removeSignalCleanup = task.addCleanup(() => signal.close());
       let pc = null;
@@ -28,6 +32,8 @@
       };
       try {
         pc = new RTCPeerConnection(await rtcConfig(iceMode));
+        registerDebugPeer(pc, { role, iceMode, protocol });
+        globalThis.__kigoRegisterPeerConnection?.(pc, { role, iceMode, protocol });
         removePeerCleanup = task.addCleanup(() => pc.close());
         const candidateTypes = { local: new Set(), remote: new Set() };
         const remoteCandidates = makeRemoteCandidateQueue(pc, candidateTypes.remote);
@@ -74,7 +80,10 @@
     }
 
     async function connectSignal(token, role, protocol, allowTokenReset = true) {
-      const ws = new WebSocket(signalURL(token, role, protocol), [reconnectProtocol]);
+      const url = signalURL(token, role, protocol);
+      const debug = registerDebugSignal({ token, role, protocol, url, allowTokenReset });
+      const ws = new WebSocket(url, [reconnectProtocol]);
+      debug?.event("created", { readyState: ws.readyState });
       const handlers = new Map();
       const waiters = [];
       const backlog = [];
@@ -92,6 +101,7 @@
       };
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
+        debug?.event("message", { type: msg.type, error: msg.type === "error" ? msg.error : undefined });
         if (msg.type === "error") {
           const err = new Error(msg.error || "signaling error");
           rejectReady(err);
@@ -120,25 +130,32 @@
         if (!handled) backlog.push(msg);
       };
       ws.onerror = () => {
+        debug?.event("error", { readyState: ws.readyState, protocol: ws.protocol });
         const err = new Error("signaling failed");
         rejectReady(err);
         failWaiters(err);
       };
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        debug?.event("close", { code: event.code, reason: event.reason, clean: event.wasClean });
         closed = true;
         const err = new Error("signaling connection closed");
         rejectReady(err);
         failWaiters(err);
       };
       await withTimeout(waitWebSocket(ws), "WebSocket signaling connection", signalTimeoutMs);
+      debug?.event("open", { protocol: ws.protocol });
       if (ws.protocol === reconnectProtocol) {
+        const storedToken = loadReconnectToken(token, role, protocol);
+        debug?.event("join", { hasReconnectToken: storedToken !== "" });
         ws.send(JSON.stringify({
           type: "signal_join",
-          reconnect_token: loadReconnectToken(token, role, protocol),
+          reconnect_token: storedToken,
         }));
         try {
           await withTimeout(readyPromise, "signaling readiness", signalTimeoutMs);
+          debug?.event("ready", { reconnectSupported, generation });
         } catch (err) {
+          debug?.event("ready_error", { message: String(err?.message || err) });
           if (allowTokenReset && /invalid reconnect token/i.test(String(err?.message || err))) {
             discardReconnectToken(token, role, protocol);
             if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
@@ -147,6 +164,7 @@
           throw err;
         }
       } else {
+        debug?.event("legacy_ready", { protocol: ws.protocol });
         resolveReady();
       }
       return {
@@ -353,6 +371,7 @@
 
     async function connectPrimaryPeer({ role, signalToken, task, protocol, iceMode, unorderedData, raceMode = "" }) {
       const connectTimeoutMs = iceMode === "direct" ? directTimeoutMs : signalTimeoutMs;
+      registerDebugStage("connect_primary", { role, iceMode, protocol, tokenPrefix: String(signalToken).slice(0, 8) });
       let peer = null;
       try {
         peer = await createPeer(role, signalToken, task, protocol, iceMode, unorderedData);
@@ -381,7 +400,9 @@
 
     async function connectRacedPeer(config) {
       const { role, token, task, protocol, onRelayStart = () => {} } = config;
+      registerDebugStage("race_token_start", { role, protocol, tokenPrefix: String(token).slice(0, 8) });
       const relayToken = await iceRaceToken(token, "relay");
+      registerDebugStage("race_token_ready", { role, protocol, relayTokenPrefix: String(relayToken).slice(0, 8) });
       const raceStarted = performance.now();
       const race = {
         enabled: true,
@@ -503,6 +524,7 @@
         };
         const start = (mode, signalToken) => {
           if (settled || states.has(mode)) return;
+          registerDebugStage("race_start", { role, mode, protocol, tokenPrefix: String(signalToken).slice(0, 8) });
           const child = createChildTask(task);
           const state = { status: "connecting", task: child, peer: null, candidate: null, error: null };
           states.set(mode, state);
@@ -539,6 +561,7 @@
         onRetry = () => {},
         onParallelFallback = () => {},
       } = config;
+      registerDebugStage("run_session", { role, protocol, tokenPrefix: String(token).slice(0, 8) });
       const storedRoute = loadReconnectRoute(token, role, protocol);
       const sessionRoute = storedRoute || (config.directFirst ? "race" : "primary");
       const directFirst = sessionRoute === "race";
@@ -721,6 +744,52 @@
       if (urls.length) filtered.push({ ...server, urls });
     }
     return filtered;
+  }
+
+  function registerDebugPeer(pc, metadata) {
+    if (!new URLSearchParams(location.search).has("kigo-debug")) return;
+    const peers = globalThis.__kigoPeerDiagnostics ||= [];
+    const entry = { pc, metadata, events: [] };
+    peers.push(entry);
+    for (const eventName of ["signalingstatechange", "icegatheringstatechange", "iceconnectionstatechange", "connectionstatechange"]) {
+      pc.addEventListener(eventName, () => {
+        entry.events.push({
+          event: eventName,
+          signalingState: pc.signalingState,
+          iceGatheringState: pc.iceGatheringState,
+          iceConnectionState: pc.iceConnectionState,
+          connectionState: pc.connectionState,
+        });
+      });
+    }
+  }
+
+  function registerDebugSignal(metadata) {
+    if (!new URLSearchParams(location.search).has("kigo-debug")) return null;
+    const signals = globalThis.__kigoSignalDiagnostics ||= [];
+    const started = performance.now();
+    const entry = {
+      metadata: {
+        role: metadata.role,
+        protocol: metadata.protocol,
+        tokenPrefix: String(metadata.token).slice(0, 8),
+        url: metadata.url,
+        allowTokenReset: metadata.allowTokenReset,
+      },
+      events: [],
+    };
+    signals.push(entry);
+    return {
+      event(name, details = {}) {
+        entry.events.push({ atMs: Math.round(performance.now() - started), name, ...details });
+      },
+    };
+  }
+
+  function registerDebugStage(name, details = {}) {
+    const debug = globalThis.__kigoRuntimeDebug;
+    if (!debug) return;
+    debug.stages.push({ atMs: Math.round(performance.now()), name, ...details });
   }
 
   function isTURNURL(url) {

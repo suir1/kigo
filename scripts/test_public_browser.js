@@ -54,6 +54,54 @@ test("validateOptions accepts resume only with a checkpoint-sized payload", () =
   }
 });
 
+test("validateOptions derives file size from an external file", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-options-"));
+  const file = path.join(dir, "fixture.bin");
+  fs.writeFileSync(file, Buffer.alloc(17));
+  const previousPath = process.env.KIGO_PUBLIC_BROWSER_FILE_PATH;
+  const previousBytes = process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+  try {
+    process.env.KIGO_PUBLIC_BROWSER_FILE_PATH = file;
+    delete process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+    const options = validateOptions(validRaw({ scenarios: "file" }));
+    assert.equal(options.filePath, file);
+    assert.equal(options.fileBytes, 17);
+  } finally {
+    if (previousPath === undefined) delete process.env.KIGO_PUBLIC_BROWSER_FILE_PATH;
+    else process.env.KIGO_PUBLIC_BROWSER_FILE_PATH = previousPath;
+    if (previousBytes === undefined) delete process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+    else process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES = previousBytes;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("validateOptions accepts an external file for resume", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-resume-options-"));
+  const file = path.join(dir, "fixture.bin");
+  fs.writeFileSync(file, Buffer.alloc(4 * 1024 * 1024 + 1));
+  const previousPath = process.env.KIGO_PUBLIC_BROWSER_FILE_PATH;
+  const previousBytes = process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+  try {
+    process.env.KIGO_PUBLIC_BROWSER_FILE_PATH = file;
+    delete process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+    const options = validateOptions(validRaw({ scenarios: "resume" }));
+    assert.equal(options.filePath, file);
+    assert.equal(options.fileBytes, 4 * 1024 * 1024 + 1);
+  } finally {
+    if (previousPath === undefined) delete process.env.KIGO_PUBLIC_BROWSER_FILE_PATH;
+    else process.env.KIGO_PUBLIC_BROWSER_FILE_PATH = previousPath;
+    if (previousBytes === undefined) delete process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES;
+    else process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES = previousBytes;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("validateOptions rejects insecure or credentialed endpoints", () => {
   assert.throws(() => validateOptions(validRaw({ url: "http://kigo.example" })), /must use HTTPS/);
   assert.throws(() => validateOptions(validRaw({ url: "https://user:pass@kigo.example" })), /credentials/);

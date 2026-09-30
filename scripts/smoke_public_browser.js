@@ -50,7 +50,21 @@ function validateOptions(raw) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 600) {
     throw new Error("timeout seconds must be an integer between 1 and 600");
   }
-  const fileBytes = Number(process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES || 256 * 1024);
+  const configuredFilePath = String(process.env.KIGO_PUBLIC_BROWSER_FILE_PATH || "").trim();
+  let fileBytes = Number(process.env.KIGO_PUBLIC_BROWSER_FILE_BYTES || 256 * 1024);
+  if (configuredFilePath) {
+    let stat;
+    try {
+      stat = fs.statSync(configuredFilePath);
+    } catch (err) {
+      throw new Error(`KIGO_PUBLIC_BROWSER_FILE_PATH is not readable: ${err.message}`);
+    }
+    if (!stat.isFile()) throw new Error("KIGO_PUBLIC_BROWSER_FILE_PATH must point to a regular file");
+    if (!Number.isSafeInteger(stat.size) || stat.size < 1 || stat.size > 512 * 1024 * 1024) {
+      throw new Error("KIGO_PUBLIC_BROWSER_FILE_PATH must be between 1 and 536870912 bytes");
+    }
+    fileBytes = stat.size;
+  }
   if (!Number.isSafeInteger(fileBytes) || fileBytes < 1 || fileBytes > 512 * 1024 * 1024) {
     throw new Error("KIGO_PUBLIC_BROWSER_FILE_BYTES must be an integer between 1 and 536870912");
   }
@@ -66,6 +80,7 @@ function validateOptions(raw) {
     scenarios,
     timeoutMS: timeoutSeconds * 1000,
     fileBytes,
+    filePath: configuredFilePath,
     artifactDir: path.resolve(raw.artifact_dir || "artifacts/public-browser-matrix"),
     dryRun: raw.dryRun,
   };
@@ -331,16 +346,18 @@ async function runFile(browser, options) {
   await installRouteProbe(context, options.forceTurn);
   const code = randomCode();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-"));
-  const source = path.join(work, "payload.bin");
+  const source = options.filePath || path.join(work, "payload.bin");
   const received = path.join(work, "received.bin");
-  const output = fs.createWriteStream(source);
-  let remaining = options.fileBytes;
-  while (remaining > 0) {
-    const size = Math.min(remaining, 1024 * 1024);
-    if (!output.write(crypto.randomBytes(size))) await new Promise((resolve) => output.once("drain", resolve));
-    remaining -= size;
+  if (!options.filePath) {
+    const output = fs.createWriteStream(source);
+    let remaining = options.fileBytes;
+    while (remaining > 0) {
+      const size = Math.min(remaining, 1024 * 1024);
+      if (!output.write(crypto.randomBytes(size))) await new Promise((resolve) => output.once("drain", resolve));
+      remaining -= size;
+    }
+    await new Promise((resolve, reject) => output.end((err) => err ? reject(err) : resolve()));
   }
-  await new Promise((resolve, reject) => output.end((err) => err ? reject(err) : resolve()));
   let receiver;
   let sender;
   try {
@@ -393,9 +410,13 @@ async function runResume(browser, options) {
   await installRouteProbe(context, options.forceTurn);
   const code = randomCode();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-resume-"));
-  const source = path.join(work, "resume-payload.bin");
+  const source = path.join(
+    work,
+    options.filePath ? `resume-${code}-${path.basename(options.filePath)}` : "resume-payload.bin",
+  );
   const received = path.join(work, "resume-received.bin");
-  fs.writeFileSync(source, crypto.randomBytes(options.fileBytes));
+  if (options.filePath) fs.copyFileSync(options.filePath, source);
+  else fs.writeFileSync(source, crypto.randomBytes(options.fileBytes));
   let receiver;
   let sender;
   try {

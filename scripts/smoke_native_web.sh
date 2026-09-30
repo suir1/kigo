@@ -158,6 +158,14 @@ const zlib = require("zlib");
 const [bin, baseURL, work, browserName, channel, routeHistory] = process.argv.slice(2);
 const nativeInterface = process.env.KIGO_SMOKE_NATIVE_INTERFACE || "";
 const ignoreTLSErrors = process.env.KIGO_SMOKE_IGNORE_TLS_ERRORS === "1";
+const firefoxUserPrefs = { "media.peerconnection.ice.loopback": true };
+const smokeURL = new URL(baseURL);
+if (smokeURL.protocol === "http:" && smokeURL.hostname !== "localhost" && smokeURL.hostname !== "127.0.0.1" && smokeURL.hostname !== "::1") {
+  // Firefox disables WebCrypto on non-loopback HTTP origins unless the host
+  // is explicitly trusted. This keeps LAN-addressed ICE tests representative
+  // without weakening the production application's secure-context checks.
+  firefoxUserPrefs["dom.securecontext.allowlist"] = smokeURL.hostname;
+}
 const browserArgs = (process.env.KIGO_SMOKE_BROWSER_ARGS || "")
   .split(",")
   .map((value) => value.trim())
@@ -260,50 +268,95 @@ async function withTimeout(label, ms, fn) {
 async function runSmoke(browser, label, ms, fn) {
   if (smokeFilters.length && !smokeFilters.some((filter) => label.includes(filter))) return;
   const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: ignoreTLSErrors });
-  await context.addInitScript(() => {
-    if (window.__kigoSmokePeerConnections) return;
-    const NativePeerConnection = window.RTCPeerConnection;
-    const peers = [];
-    Object.defineProperty(window, "__kigoSmokePeerConnections", { value: peers });
-    window.RTCPeerConnection = new Proxy(NativePeerConnection, {
-      construct(Target, args) {
-        const peer = Reflect.construct(Target, args);
-        peers.push(peer);
-        return peer;
-      },
-    });
-  });
+  await installPeerConnectionTracking(context);
   try {
     await withTimeout(label, ms, () => fn(context));
   } catch (err) {
-    const pages = context.pages();
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      let url = "";
-      let log = "";
-      try {
-        url = page.url();
-        log = await page.locator("#log").textContent({ timeout: 500 });
-      } catch {}
-      const peers = await peerConnectionDiagnostics(page);
-      console.error(`context dump ${label} page ${i}: ${url}\n${log}\npeer connections: ${JSON.stringify(peers)}`);
-    }
+    await dumpSmokeContext(context, label);
     throw err;
   } finally {
     await context.close();
   }
 }
 
+async function installPeerConnectionTracking(context) {
+  await context.addInitScript(() => {
+    if (window.__kigoSmokePeerConnections) return;
+    const peers = [];
+    Object.defineProperty(window, "__kigoSmokePeerConnections", { value: peers });
+    Object.defineProperty(window, "__kigoRegisterPeerConnection", {
+      value: (peer, metadata = {}) => {
+        peer.__kigoSmokeEvents = [];
+        peer.__kigoSmokeMetadata = metadata;
+        for (const eventName of ["signalingstatechange", "icegatheringstatechange", "iceconnectionstatechange", "connectionstatechange"]) {
+          peer.addEventListener(eventName, () => {
+            peer.__kigoSmokeEvents.push({
+              event: eventName,
+              signalingState: peer.signalingState,
+              iceGatheringState: peer.iceGatheringState,
+              iceConnectionState: peer.iceConnectionState,
+              connectionState: peer.connectionState,
+            });
+          });
+        }
+        peers.push(peer);
+      },
+    });
+    Object.defineProperty(window, "__kigoSmokePeerTrackingInstalled", { value: true });
+  });
+}
+
+async function dumpSmokeContext(context, label) {
+  const pages = context.pages();
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    let url = "";
+    let log = "";
+    try {
+      url = page.url();
+      log = await page.locator("#log").textContent({ timeout: 500 });
+    } catch {}
+    const diagnostics = await peerConnectionDiagnostics(page);
+    console.error(`context dump ${label} page ${i}: ${url}\n${log}\nruntime: ${JSON.stringify(diagnostics.runtime)}\nruntime asset: ${JSON.stringify(diagnostics.runtimeAsset)}\nruntime API: ${JSON.stringify(diagnostics.runtimeAPI)}\nscript resources: ${JSON.stringify(diagnostics.scriptResources)}\nsignaling: ${JSON.stringify(diagnostics.signals)}\npeer tracking: ${JSON.stringify(diagnostics.tracking)}\npeer connections: ${JSON.stringify(diagnostics.peers)}`);
+  }
+}
+
 async function peerConnectionDiagnostics(page) {
   return page.evaluate(async () => {
+    let runtimeAsset = { fetched: false, marker: false, status: 0, url: "", error: "" };
+    try {
+      const response = await fetch(`/webrtc-runtime.js?smoke-probe=${Date.now()}`, { cache: "no-store" });
+      const source = await response.text();
+      runtimeAsset = {
+        fetched: true,
+        marker: source.includes("signal-stage-v1"),
+        status: response.status,
+        url: response.url,
+        error: "",
+      };
+    } catch (err) {
+      runtimeAsset.error = String(err?.message || err);
+    }
     const summarizeSDP = (sdp) => String(sdp)
       .split(/\r?\n/)
       .filter((line) => /^(m=application|a=(setup|sctp-port|max-message-size|ice-options):)/.test(line))
       .join(" | ");
-    const peers = window.__kigoSmokePeerConnections || [];
-    return Promise.all(peers.map(async (pc) => {
+    const debugEntries = window.__kigoPeerDiagnostics || [];
+    const trackedPeers = window.__kigoSmokePeerConnections || [];
+    const entries = debugEntries.length
+      ? debugEntries
+      : trackedPeers.map((pc) => ({ pc, metadata: pc.__kigoSmokeMetadata || {}, events: pc.__kigoSmokeEvents || [] }));
+    const details = await Promise.all(entries.map(async (entry) => {
+      const pc = entry.pc;
       const candidateCounts = {};
       const candidatePairs = [];
+      const read = (fn, fallback = "") => {
+        try {
+          return fn();
+        } catch {
+          return fallback;
+        }
+      };
       try {
         const stats = await pc.getStats();
         for (const stat of stats.values()) {
@@ -317,19 +370,47 @@ async function peerConnectionDiagnostics(page) {
         }
       } catch {}
       return {
-        signalingState: pc.signalingState,
-        iceConnectionState: pc.iceConnectionState,
-        iceGatheringState: pc.iceGatheringState,
-        connectionState: pc.connectionState,
-        localDescription: pc.localDescription?.type || "",
-        remoteDescription: pc.remoteDescription?.type || "",
-        localSDP: summarizeSDP(pc.localDescription?.sdp || ""),
-        remoteSDP: summarizeSDP(pc.remoteDescription?.sdp || ""),
+        metadata: entry.metadata || {},
+        signalingState: read(() => pc.signalingState),
+        iceConnectionState: read(() => pc.iceConnectionState),
+        iceGatheringState: read(() => pc.iceGatheringState),
+        connectionState: read(() => pc.connectionState),
+        localDescription: read(() => pc.localDescription?.type || ""),
+        remoteDescription: read(() => pc.remoteDescription?.type || ""),
+        localSDP: summarizeSDP(read(() => pc.localDescription?.sdp || "")),
+        remoteSDP: summarizeSDP(read(() => pc.remoteDescription?.sdp || "")),
         candidateCounts,
         candidatePairs,
+        events: entry.events || [],
       };
     }));
-  }).catch(() => []);
+    return {
+      runtime: window.__kigoRuntimeDebug || null,
+      runtimeAsset,
+      runtimeAPI: {
+        present: Boolean(window.KigoWebRTC),
+        keys: window.KigoWebRTC ? Object.keys(window.KigoWebRTC) : [],
+      },
+      scriptResources: performance.getEntriesByType("resource")
+        .filter((entry) => entry.name.includes("webrtc-runtime.js"))
+        .map((entry) => ({ name: entry.name, transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize })),
+      signals: window.__kigoSignalDiagnostics || [],
+      tracking: {
+        installed: window.__kigoSmokePeerTrackingInstalled === true,
+        count: entries.length,
+        constructorName: window.RTCPeerConnection?.name || "",
+      },
+      peers: details,
+    };
+  }).catch((err) => ({
+    runtime: null,
+    runtimeAsset: { fetched: false, marker: false, status: 0, url: "", error: String(err?.message || err) },
+    runtimeAPI: { present: false, keys: [] },
+    scriptResources: [],
+    signals: [],
+    tracking: { installed: false, count: 0 },
+    peers: [],
+  }));
 }
 
 async function closeSmokeBrowser(browser) {
@@ -347,7 +428,9 @@ function trackPage(page) {
   const logs = [];
   page.on("pageerror", (err) => logs.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
-    if (["error", "warning"].includes(msg.type())) logs.push(`${msg.type()}: ${msg.text()}`);
+    const text = msg.text();
+    if (text.includes("Mixed Content: Upgrading insecure display request") && text.includes("favicon.ico")) return;
+    if (["error", "warning"].includes(msg.type())) logs.push(`${msg.type()}: ${text}`);
   });
   return { page, logs };
 }
@@ -389,10 +472,15 @@ async function secondaryWebPeer(primaryContext) {
   }
   const peerBrowser = await firefox.launch({
     headless: true,
-    firefoxUserPrefs: { "media.peerconnection.ice.loopback": true },
+    firefoxUserPrefs,
   });
   const context = await peerBrowser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: ignoreTLSErrors });
-  return { context, close: () => closeSmokeBrowser(peerBrowser) };
+  await installPeerConnectionTracking(context);
+  return {
+    context,
+    dump: (label) => dumpSmokeContext(context, label),
+    close: () => closeSmokeBrowser(peerBrowser),
+  };
 }
 
 async function extractCode(page) {
@@ -625,10 +713,11 @@ async function browserOPFSFinalizeRetry(context) {
   console.log("ok browser OPFS finalize retry");
 }
 
-async function browserPersistentReceiveResume(browser) {
-  console.log("start browser same-code refresh resume");
-  const dir = path.join(work, "browser-persistent-resume");
-  const src = path.join(dir, "persistent-resume.bin");
+async function browserPersistentReceiveResume(browser, { forceRelay = false } = {}) {
+  const routeLabel = forceRelay ? "TURN" : "direct";
+  console.log(`start browser ${routeLabel} same-code refresh resume`);
+  const dir = path.join(work, `browser-persistent-resume-${routeLabel.toLowerCase()}`);
+  const src = path.join(dir, `persistent-resume-${routeLabel.toLowerCase()}.bin`);
   const dst = path.join(dir, "downloaded.bin");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(src, crypto.randomBytes(12 * 1024 * 1024));
@@ -640,8 +729,19 @@ async function browserPersistentReceiveResume(browser) {
   };
 
   const sender = spawnFileSend(src);
-  const code = await waitForPairingCode(sender, "same-code persistent resume");
-  const { page, logs } = await newPage(browser);
+  const code = await waitForPairingCode(sender, `${routeLabel} same-code persistent resume`);
+  const beforeGoto = forceRelay ? async (page) => {
+    await page.addInitScript(() => {
+      const NativePeerConnection = window.RTCPeerConnection;
+      window.RTCPeerConnection = new Proxy(NativePeerConnection, {
+        construct(Target, args) {
+          args[0] = { ...(args[0] || {}), iceTransportPolicy: "relay" };
+          return Reflect.construct(Target, args);
+        },
+      });
+    });
+  } : undefined;
+  const { page, logs } = await newPage(browser, baseURL, { beforeGoto });
   await page.evaluate(() => {
     const decode = window.decodeTransferChunk;
     window.decodeTransferChunk = async (...args) => {
@@ -705,6 +805,10 @@ async function browserPersistentReceiveResume(browser) {
   }, code);
   await page.reload();
   await waitForTransferComplete(page, 45000);
+  const pageLog = await page.locator("#log").textContent();
+  if (forceRelay && !pageLog.includes("Path: TURN relay")) {
+    throw new Error(`browser resumed route was not TURN relay\n${pageLog}`);
+  }
   await saveDownload(page, () => page.locator("#downloads a").first().click(), dst);
   const exitCode = await waitProc(sender.proc);
   const output = sender.output();
@@ -712,7 +816,8 @@ async function browserPersistentReceiveResume(browser) {
   if (!output.stdout.includes("reconnecting attempt 2/3")) {
     throw new Error(`native sender did not attempt same-code WebRTC reconnect\nstdout=${output.stdout}\nstderr=${output.stderr}`);
   }
-  if (!/resuming persistent-resume\.bin from [1-9]\d*\/12582912 bytes/.test(output.stdout)) {
+  const escapedName = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp(`resuming ${escapedName} from [1-9]\\d*/12582912 bytes`).test(output.stdout)) {
     throw new Error(`native sender did not resume browser OPFS partial\nstdout=${output.stdout}\nstderr=${output.stderr}`);
   }
   assertEqual(sha256(dst), item.sha256, "browser persistent resume download hash mismatch");
@@ -723,8 +828,8 @@ async function browserPersistentReceiveResume(browser) {
     return (await handle.getFile()).size;
   }, partialBefore);
   assertEqual(cacheAfter, item.size, "completed OPFS cache size mismatch");
-  if (logs.length) throw new Error(`browser persistent resume logs:\n${logs.join("\n")}`);
-  console.log("ok browser same-code refresh resume");
+  if (logs.length) throw new Error(`browser ${routeLabel} persistent resume logs:\n${logs.join("\n")}`);
+  console.log(`ok browser ${routeLabel} same-code refresh resume`);
 }
 
 async function browserCorruptPersistentResume(browser) {
@@ -995,9 +1100,9 @@ async function webToWebText(browser) {
   const code = randomPairingCode();
   const peer = await secondaryWebPeer(browser);
   try {
-    const receiver = await startWebReceiver(peer.context, code, "", { completionTimeout: 60000 });
+    const receiver = await startWebReceiver(peer.context, code, "?kigo-debug=1", { completionTimeout: 60000 });
 
-    const sender = await newPage(browser);
+    const sender = await newPage(browser, `${baseURL}/?kigo-debug=1`);
     await sender.page.evaluate((fixedCode) => { window.generateCode = () => fixedCode; }, code);
     await sender.page.click('button[data-tab="text"]');
     await sender.page.fill("#textInput", payload);
@@ -1015,6 +1120,9 @@ async function webToWebText(browser) {
     if (sender.logs.length) throw new Error(`web-web text sender browser logs:\n${sender.logs.join("\n")}`);
     if (receiver.logs.length) throw new Error(`web-web text receiver browser logs:\n${receiver.logs.join("\n")}`);
     console.log("ok web->web text");
+  } catch (err) {
+    if (peer.dump) await peer.dump("web->web text receiver");
+    throw err;
   } finally {
     await peer.close();
   }
@@ -2024,7 +2132,7 @@ async function webFolderToNative(browser) {
   if (browserName === "chromium") {
     launchOptions.args = ["--disable-breakpad", "--disable-crash-reporter", ...browserArgs];
   } else if (browserName === "firefox") {
-    launchOptions.firefoxUserPrefs = { "media.peerconnection.ice.loopback": true };
+    launchOptions.firefoxUserPrefs = firefoxUserPrefs;
   }
   if (channel) launchOptions.channel = channel;
   const browser = await browserType.launch(launchOptions);
@@ -2035,6 +2143,9 @@ async function webFolderToNative(browser) {
     await runSmoke(browser, "browser OPFS finalize recovery", 60000, browserOPFSFinalizeRecovery);
     await runSmoke(browser, "browser OPFS finalize retry", 60000, browserOPFSFinalizeRetry);
     await runSmoke(browser, "browser persistent receive resume", 90000, browserPersistentReceiveResume);
+    await runSmoke(browser, "browser TURN refresh resume", 120000, (context) => (
+      browserPersistentReceiveResume(context, { forceRelay: true })
+    ));
     await runSmoke(browser, "browser corrupt persistent resume", 60000, browserCorruptPersistentResume);
     await runSmoke(browser, "native->web text", 45000, nativeToWebText);
     await runSmoke(browser, "web->native file", 45000, webToNativeFile);

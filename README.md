@@ -612,6 +612,8 @@ network regression runs. Reports include a bounded, non-secret sender/receiver t
 selected ICE path, payload rate, DataChannel backpressure, and receive-storage metrics. Chromium file runs above
 128 MiB fail unless the receiver used OPFS and completed without verified-memory recovery. This test consumes TURN
 bandwidth and should use a quota-limited test deployment.
+Set `KIGO_PUBLIC_BROWSER_FILE_PATH=/absolute/file` to transmit an existing file instead of generating a random
+payload; its actual size is used for the scenario and the downloaded file is compared byte-for-byte by SHA-256.
 
 For example, this runs a strict-TLS 64 MiB refresh/resume proof over the service's normal route race:
 
@@ -621,6 +623,17 @@ KIGO_PUBLIC_BROWSER_SCENARIOS=resume \
 KIGO_PUBLIC_BROWSER_FORCE_TURN=0 \
 KIGO_PUBLIC_BROWSER_FILE_BYTES=$((64*1024*1024+17)) \
 KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS=600 \
+./scripts/smoke_public_browser.sh
+```
+Set `KIGO_PUBLIC_BROWSER_FILE_PATH=/absolute/path/to/file` in the same command to run the refresh/resume proof against a real existing file; its size replaces `KIGO_PUBLIC_BROWSER_FILE_BYTES`.
+
+For a known regression file, run the same strict-TLS TURN proof against the deployed service:
+
+```sh
+KIGO_PUBLIC_BROWSER_URL=https://kigo.example \
+KIGO_PUBLIC_BROWSER_SCENARIOS=file \
+KIGO_PUBLIC_BROWSER_FILE_PATH=/absolute/path/to/file \
+KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS=180 \
 ./scripts/smoke_public_browser.sh
 ```
 

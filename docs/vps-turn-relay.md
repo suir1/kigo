@@ -33,14 +33,14 @@ fingerprint.
 
 Verified on 2026-09-30:
 
-- version: `v0.1.0-dev.20260929.browser-resume1`
-- source commit: `872bf125bbc157906f045d188215f8a0c489f898`
-- build date: `2026-09-29T01:24:49Z`
+- version: `v0.1.0-dev.20260930.browser-turn-resume2`
+- source commit: `b120a625e5729f1f7d5cf977126d28182a260766`
+- build date: `2026-09-30T21:45:42Z`
 - target: Go 1.26.6, Linux amd64
 - `/usr/local/bin/kigo` SHA-256:
-  `a2a6d40f83a49b4af8a7ad7f1c9c865f662f5b9cddbf5ebeb668614a3cb890a5`
+  `2d14f936425153213cfbded977e9b9b9d62661294ab09bb096a786299531bf75`
 - rollback binary:
-  `/usr/local/bin/kigo.backup-20260929-012523-opfs-retry1`
+  `/usr/local/bin/kigo.backup-20260930-214612-browser-turn-resume2`
 - `kigo-public.service`: active
 - `kigo-relay.service`: active
 - pull request 76 passed Go/protocol, Chromium, Firefox, WebKit, Linux,
@@ -55,6 +55,15 @@ Verified on 2026-09-30:
 - the selected transfer path was direct UDP WebRTC (`srflx/srflx`); receiver
   storage used OPFS `sync-worker`, with a 1.5 MiB peak persistent-write queue
   and a final matching checksum
+- a second strict-TLS Chromium refresh/resume proof forced TURN for
+  33,554,449 bytes and also completed with a matching final checksum; evidence
+  is in `artifacts/vps-browser-resume-turn-32m-20261001-044113/matrix.json`
+- that TURN proof refreshed after persisting 4,194,304 bytes, resumed from the
+  same offset, and selected UDP relay candidates before and after refresh
+- the follow-up Firefox smoke hardens loopback ICE and non-loopback HTTP secure
+  context handling, and adds query-gated WebRTC diagnostics without exposing
+  full room tokens; CI passed Chromium, Firefox, WebKit, Linux, Windows,
+  container, and release-layout checks before this deployment
 
 Both services load `/usr/local/bin/kigo`. The public service stores encrypted
 shared-note snapshots under `/var/lib/kigo/notes`. Secrets remain in root/group
