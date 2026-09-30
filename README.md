@@ -625,6 +625,7 @@ KIGO_PUBLIC_BROWSER_FILE_BYTES=$((64*1024*1024+17)) \
 KIGO_PUBLIC_BROWSER_TIMEOUT_SECONDS=600 \
 ./scripts/smoke_public_browser.sh
 ```
+Set `KIGO_PUBLIC_BROWSER_FILE_PATH=/absolute/path/to/file` in the same command to run the refresh/resume proof against a real existing file; its size replaces `KIGO_PUBLIC_BROWSER_FILE_BYTES`.
 
 For a known regression file, run the same strict-TLS TURN proof against the deployed service:
 

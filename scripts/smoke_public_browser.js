@@ -410,9 +410,13 @@ async function runResume(browser, options) {
   await installRouteProbe(context, options.forceTurn);
   const code = randomCode();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "kigo-public-browser-resume-"));
-  const source = path.join(work, "resume-payload.bin");
+  const source = path.join(
+    work,
+    options.filePath ? `resume-${code}-${path.basename(options.filePath)}` : "resume-payload.bin",
+  );
   const received = path.join(work, "resume-received.bin");
-  fs.writeFileSync(source, crypto.randomBytes(options.fileBytes));
+  if (options.filePath) fs.copyFileSync(options.filePath, source);
+  else fs.writeFileSync(source, crypto.randomBytes(options.fileBytes));
   let receiver;
   let sender;
   try {
