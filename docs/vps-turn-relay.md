@@ -31,27 +31,30 @@ fingerprint.
 
 ## Current deployment
 
-Verified on 2026-09-28:
+Verified on 2026-09-30:
 
-- version: `v0.1.0-dev.20260928.opfs-retry1`
-- source commit: `0fb82bab4f2f8bb7416a2aade2fc91ddd71842b5`
-- build date: `2026-09-28T23:06:58Z`
+- version: `v0.1.0-dev.20260929.browser-resume1`
+- source commit: `872bf125bbc157906f045d188215f8a0c489f898`
+- build date: `2026-09-29T01:24:49Z`
 - target: Go 1.26.6, Linux amd64
 - `/usr/local/bin/kigo` SHA-256:
-  `26224cc640f798cee41c0df31eb83e7de92c7a61ed98d265a301d3492972301d`
+  `a2a6d40f83a49b4af8a7ad7f1c9c865f662f5b9cddbf5ebeb668614a3cb890a5`
 - rollback binary:
-  `/usr/local/bin/kigo.backup-20260928-230658-opfs-recovery2`
+  `/usr/local/bin/kigo.backup-20260929-012523-opfs-retry1`
 - `kigo-public.service`: active
 - `kigo-relay.service`: active
-- pull request 73 passed Go/protocol, Chromium, Firefox, WebKit, Linux,
+- pull request 76 passed Go/protocol, Chromium, Firefox, WebKit, Linux,
   Windows, container, and release-layout checks
-- local Go/Python/relay/native-web suites passed, including a stale first OPFS
-  snapshot with memory recovery disabled and persistent-corruption recovery
-- public Chromium file transfer passed over direct UDP WebRTC (`srflx/srflx`)
-  with strict TLS verification and matching SHA-256 for 167,772,177 bytes
-- the large-file receiver reported OPFS `sync-worker` storage with no memory
-  recovery; payload throughput was 2.175 MiB/s, OPFS writes took 1.952s, and
-  the peak persistent-write queue was 262,144 bytes
+- local Go, browser protocol, relay, and native-web suites passed, together
+  with 32 MiB and 64 MiB browser refresh/resume proofs
+- public Chromium refresh/resume passed with strict TLS verification and a
+  matching final SHA-256 for 67,108,881 bytes; evidence is in
+  `artifacts/vps-browser-resume-64m-20261001-042513/matrix.json`
+- the receiver persisted 7,012,352 bytes in OPFS before refresh and the sender
+  accepted exactly that nonzero resume offset after signaling reconnection
+- the selected transfer path was direct UDP WebRTC (`srflx/srflx`); receiver
+  storage used OPFS `sync-worker`, with a 1.5 MiB peak persistent-write queue
+  and a final matching checksum
 
 Both services load `/usr/local/bin/kigo`. The public service stores encrypted
 shared-note snapshots under `/var/lib/kigo/notes`. Secrets remain in root/group

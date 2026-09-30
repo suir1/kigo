@@ -4,6 +4,21 @@
 > binary hashes, backup paths, and deployment status below are retained only as
 > implementation evidence. Use `docs/vps-turn-relay.md` for current operations.
 
+## 2026-09-28 OPFS recovery deployment
+
+The deployment replaced on 2026-09-30 was
+`v0.1.0-dev.20260928.opfs-retry1`, built from commit
+`0fb82bab4f2f8bb7416a2aade2fc91ddd71842b5` at
+`2026-09-28T23:06:58Z` for Go 1.26.6 on Linux amd64. Its binary SHA-256 was
+`26224cc640f798cee41c0df31eb83e7de92c7a61ed98d265a301d3492972301d`.
+The binary remains available as
+`/usr/local/bin/kigo.backup-20260929-012523-opfs-retry1`.
+
+Pull request 73 passed the complete CI matrix. Public Chromium transferred
+167,772,177 bytes over direct `srflx/srflx` UDP WebRTC with strict TLS and a
+matching checksum. The receiver used OPFS `sync-worker` storage without memory
+recovery.
+
 # VPS public relays
 
 Kigo's persistent native TCP and WebRTC TURN relays are deployed on the
