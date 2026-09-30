@@ -625,10 +625,11 @@ async function browserOPFSFinalizeRetry(context) {
   console.log("ok browser OPFS finalize retry");
 }
 
-async function browserPersistentReceiveResume(browser) {
-  console.log("start browser same-code refresh resume");
-  const dir = path.join(work, "browser-persistent-resume");
-  const src = path.join(dir, "persistent-resume.bin");
+async function browserPersistentReceiveResume(browser, { forceRelay = false } = {}) {
+  const routeLabel = forceRelay ? "TURN" : "direct";
+  console.log(`start browser ${routeLabel} same-code refresh resume`);
+  const dir = path.join(work, `browser-persistent-resume-${routeLabel.toLowerCase()}`);
+  const src = path.join(dir, `persistent-resume-${routeLabel.toLowerCase()}.bin`);
   const dst = path.join(dir, "downloaded.bin");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(src, crypto.randomBytes(12 * 1024 * 1024));
@@ -640,8 +641,19 @@ async function browserPersistentReceiveResume(browser) {
   };
 
   const sender = spawnFileSend(src);
-  const code = await waitForPairingCode(sender, "same-code persistent resume");
-  const { page, logs } = await newPage(browser);
+  const code = await waitForPairingCode(sender, `${routeLabel} same-code persistent resume`);
+  const beforeGoto = forceRelay ? async (page) => {
+    await page.addInitScript(() => {
+      const NativePeerConnection = window.RTCPeerConnection;
+      window.RTCPeerConnection = new Proxy(NativePeerConnection, {
+        construct(Target, args) {
+          args[0] = { ...(args[0] || {}), iceTransportPolicy: "relay" };
+          return Reflect.construct(Target, args);
+        },
+      });
+    });
+  } : undefined;
+  const { page, logs } = await newPage(browser, baseURL, { beforeGoto });
   await page.evaluate(() => {
     const decode = window.decodeTransferChunk;
     window.decodeTransferChunk = async (...args) => {
@@ -705,6 +717,10 @@ async function browserPersistentReceiveResume(browser) {
   }, code);
   await page.reload();
   await waitForTransferComplete(page, 45000);
+  const pageLog = await page.locator("#log").textContent();
+  if (forceRelay && !pageLog.includes("Path: TURN relay")) {
+    throw new Error(`browser resumed route was not TURN relay\n${pageLog}`);
+  }
   await saveDownload(page, () => page.locator("#downloads a").first().click(), dst);
   const exitCode = await waitProc(sender.proc);
   const output = sender.output();
@@ -712,7 +728,8 @@ async function browserPersistentReceiveResume(browser) {
   if (!output.stdout.includes("reconnecting attempt 2/3")) {
     throw new Error(`native sender did not attempt same-code WebRTC reconnect\nstdout=${output.stdout}\nstderr=${output.stderr}`);
   }
-  if (!/resuming persistent-resume\.bin from [1-9]\d*\/12582912 bytes/.test(output.stdout)) {
+  const escapedName = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp(`resuming ${escapedName} from [1-9]\\d*/12582912 bytes`).test(output.stdout)) {
     throw new Error(`native sender did not resume browser OPFS partial\nstdout=${output.stdout}\nstderr=${output.stderr}`);
   }
   assertEqual(sha256(dst), item.sha256, "browser persistent resume download hash mismatch");
@@ -723,8 +740,8 @@ async function browserPersistentReceiveResume(browser) {
     return (await handle.getFile()).size;
   }, partialBefore);
   assertEqual(cacheAfter, item.size, "completed OPFS cache size mismatch");
-  if (logs.length) throw new Error(`browser persistent resume logs:\n${logs.join("\n")}`);
-  console.log("ok browser same-code refresh resume");
+  if (logs.length) throw new Error(`browser ${routeLabel} persistent resume logs:\n${logs.join("\n")}`);
+  console.log(`ok browser ${routeLabel} same-code refresh resume`);
 }
 
 async function browserCorruptPersistentResume(browser) {
@@ -2035,6 +2052,9 @@ async function webFolderToNative(browser) {
     await runSmoke(browser, "browser OPFS finalize recovery", 60000, browserOPFSFinalizeRecovery);
     await runSmoke(browser, "browser OPFS finalize retry", 60000, browserOPFSFinalizeRetry);
     await runSmoke(browser, "browser persistent receive resume", 90000, browserPersistentReceiveResume);
+    await runSmoke(browser, "browser TURN refresh resume", 120000, (context) => (
+      browserPersistentReceiveResume(context, { forceRelay: true })
+    ));
     await runSmoke(browser, "browser corrupt persistent resume", 60000, browserCorruptPersistentResume);
     await runSmoke(browser, "native->web text", 45000, nativeToWebText);
     await runSmoke(browser, "web->native file", 45000, webToNativeFile);

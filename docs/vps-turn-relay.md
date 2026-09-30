@@ -55,6 +55,11 @@ Verified on 2026-09-30:
 - the selected transfer path was direct UDP WebRTC (`srflx/srflx`); receiver
   storage used OPFS `sync-worker`, with a 1.5 MiB peak persistent-write queue
   and a final matching checksum
+- a second strict-TLS Chromium refresh/resume proof forced TURN for
+  33,554,449 bytes and also completed with a matching final checksum; evidence
+  is in `artifacts/vps-browser-resume-turn-32m-20261001-044113/matrix.json`
+- that TURN proof refreshed after persisting 4,194,304 bytes, resumed from the
+  same offset, and selected UDP relay candidates before and after refresh
 
 Both services load `/usr/local/bin/kigo`. The public service stores encrypted
 shared-note snapshots under `/var/lib/kigo/notes`. Secrets remain in root/group
